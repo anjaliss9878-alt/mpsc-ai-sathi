@@ -1,0 +1,97 @@
+rules_version = '2';
+
+// MPSC COMBINE AI — Firestore security rules.
+//
+// Every student's own data (profile + AI Teacher chat history) lives under
+// students/{uid}, keyed by their Firebase Auth UID. A signed-in user may
+// only read/write their own subtree — never another student's.
+//
+// Content collections (subjects/chapters/notes/mcqs/pyqs/tests/
+// currentAffairs/videos/liveClasses) are readable by any signed-in student,
+// and writable ONLY by an authenticated Admin Panel user — i.e. someone
+// whose UID has a document in `admins/{uid}`. That allow-list itself is
+// never writable by any client; it must be added manually from the
+// Firebase Console by the project owner, so privilege escalation from
+// inside the app is impossible.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    match /students/{uid} {
+      allow read, write: if isSignedIn() && request.auth.uid == uid;
+
+      match /chats/{chatId} {
+        allow read, write: if isSignedIn() && request.auth.uid == uid;
+
+        match /messages/{messageId} {
+          allow read, write: if isSignedIn() && request.auth.uid == uid;
+        }
+      }
+    }
+
+    // Admin allow-list: a user may check ONLY their own admin status.
+    // No client (including admins) may create/modify/delete entries here.
+    match /admins/{uid} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    match /subjects/{subjectId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /chapters/{chapterId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /notes/{noteId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /mcqs/{mcqId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /pyqs/{pyqId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /tests/{testId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /currentAffairs/{itemId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /videos/{videoId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /liveClasses/{classId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Deny everything else by default.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
