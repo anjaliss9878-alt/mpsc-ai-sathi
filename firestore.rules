@@ -1,34 +1,5 @@
 rules_version = '2';
 
-// MPSC COMBINE AI -- Production Firestore security rules.
-//
-// Admin model
-// -----------
-// Admins are stored at admins/{uid} with a role: "admin" field. A user is
-// an admin only if BOTH the document exists AND role == "admin", so an
-// admin can be demoted just by changing that field, without deleting the
-// document. This collection is never writable by any client; it must be
-// managed from the Firebase Console (or a trusted backend/Admin SDK) by
-// the project owner, so privilege escalation from inside either app is
-// impossible.
-//
-// Content model
-// --------------
-// Content collections (subjects/chapters/notes/mcqs/pyqs/tests/
-// currentAffairs/videos/liveClasses) are:
-//   - Fully readable/writable by admins (including unpublished drafts).
-//   - Readable by any signed-in student ONLY when published == true.
-//     Documents with no "published" field are treated as published by
-//     default, so existing/seeded content keeps working -- set
-//     published: false on a document to hide it from students while it
-//     is being drafted.
-//   - Never writable by students.
-//
-// Per-student data
-// -----------------
-// Every student's own profile, progress and AI Teacher chat history lives
-// under students/{uid}, keyed by their Firebase Auth UID. A signed-in
-// user may only read/write their own subtree, never another student's.
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -36,91 +7,104 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
     function isAdmin() {
-      return isSignedIn()
-        && exists(/databases/$(database)/documents/admins/$(request.auth.uid))
-        && get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role == 'admin';
+      return request.auth != null &&
+             exists(/databases/$(database)/documents/admins/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role == 'admin';
     }
 
     function isPublished() {
-      return !('published' in resource.data) || resource.data.published == true;
+      return resource.data.published != false;
     }
 
-    function isOwner(uid) {
-      return isSignedIn() && request.auth.uid == uid;
-    }
-
-    // Admin allow-list: a user may check ONLY their own admin status.
-    // No client (including admins) may create/modify/delete entries here.
     match /admins/{uid} {
       allow read: if isOwner(uid);
       allow write: if false;
     }
 
-    // Per-student data: profile, progress, AI Teacher chats.
     match /students/{uid} {
       allow read, write: if isOwner(uid);
-
-      match /progress/{progressId} {
-        allow read, write: if isOwner(uid);
-      }
-
-      match /chats/{chatId} {
-        allow read, write: if isOwner(uid);
-
-        match /messages/{messageId} {
-          allow read, write: if isOwner(uid);
-        }
-      }
     }
 
-    // Content collections: admin-managed, student-readable-if-published.
+    match /students/{uid}/progress/{progressId} {
+      allow read, write: if isOwner(uid);
+    }
+
+    match /students/{uid}/chats/{chatId} {
+      allow read, write: if isOwner(uid);
+    }
+
+    match /students/{uid}/chats/{chatId}/messages/{messageId} {
+      allow read, write: if isOwner(uid);
+    }
+
     match /subjects/{subjectId} {
       allow read: if isAdmin() || (isSignedIn() && isPublished());
-      allow create, update, delete: if isAdmin();
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
     }
 
     match /chapters/{chapterId} {
       allow read: if isAdmin() || (isSignedIn() && isPublished());
-      allow create, update, delete: if isAdmin();
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
     }
 
     match /notes/{noteId} {
       allow read: if isAdmin() || (isSignedIn() && isPublished());
-      allow create, update, delete: if isAdmin();
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
     }
 
     match /mcqs/{mcqId} {
       allow read: if isAdmin() || (isSignedIn() && isPublished());
-      allow create, update, delete: if isAdmin();
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
     }
 
     match /pyqs/{pyqId} {
       allow read: if isAdmin() || (isSignedIn() && isPublished());
-      allow create, update, delete: if isAdmin();
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
     }
 
     match /tests/{testId} {
       allow read: if isAdmin() || (isSignedIn() && isPublished());
-      allow create, update, delete: if isAdmin();
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
     }
 
     match /currentAffairs/{itemId} {
       allow read: if isAdmin() || (isSignedIn() && isPublished());
-      allow create, update, delete: if isAdmin();
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
     }
 
     match /videos/{videoId} {
       allow read: if isAdmin() || (isSignedIn() && isPublished());
-      allow create, update, delete: if isAdmin();
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
     }
 
     match /liveClasses/{classId} {
       allow read: if isAdmin() || (isSignedIn() && isPublished());
-      allow create, update, delete: if isAdmin();
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
     }
 
-    // Deny everything else by default.
     match /{document=**} {
       allow read, write: if false;
     }
