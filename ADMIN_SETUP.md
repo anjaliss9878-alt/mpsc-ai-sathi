@@ -17,16 +17,25 @@ setup needed to use it.
   `subjects`, `chapters`, `notes`, `mcqs`, `pyqs`, `tests`, `currentAffairs`,
   `videos`, `liveClasses`.
 - **Admin allow-list**: `admins/{uid}` — a Firebase Auth user can open the
-  Admin Panel only if a document with their UID exists in this collection.
-  This collection is **not writable by any client** (see `firestore.rules`),
-  so it must be managed from the Firebase Console only.
+  Admin Panel only if a document with their UID exists in this collection
+  AND its `role` field equals `"admin"`. This collection is **not writable
+  by any client** (see `firestore.rules`), so it must be managed from the
+  Firebase Console only.
 
 ## 2. Deploy the updated Firestore rules
 
-`firestore.rules` was updated to:
-- Allow any signed-in user to **read** all content collections.
-- Allow **write** only if the signed-in user's UID exists in `admins/{uid}`.
-- Keep `admins/{uid}` itself read-only-to-self and never client-writable.
+`firestore.rules` implements:
+- **Admins** (`admins/{uid}` doc exists with `role == "admin"`) can read
+  and write every content collection, including unpublished drafts.
+- **Students** (any signed-in user) can only **read** content documents
+  where `published == true` (documents with no `published` field are
+  treated as published by default, so existing/seeded content keeps
+  working) — and can never write to content collections.
+- **Per-student data** (`students/{uid}`, plus its `progress` and `chats`
+  subcollections) is readable/writable only by that same student — this
+  is also where AI Teacher chat history lives, so it's private to the
+  logged-in user.
+- `admins/{uid}` itself is read-only-to-self and never client-writable.
 
 Deploy it via the Firebase Console (Firestore → Rules tab → paste the
 contents of `firestore.rules` → Publish), or with the Firebase CLI if you
@@ -44,8 +53,12 @@ firebase deploy --only firestore:rules
    collection (create it if it doesn't exist) → **Add document**:
    - Document ID: the new user's **UID** (copy it from the Authentication
      tab, next to the user you just created).
-   - Fields: add `email` (string) with their email — used only for your
-     own reference, not by the security rules.
+   - Fields:
+     - `role` (string) = `admin` — **required**, this is what the security
+       rules and the app both check. Omitting it (or setting any other
+       value) denies access even if the document exists.
+     - `email` (string) with their email — optional, for your own
+       reference only, not used by the security rules.
 3. That's it — this user can now sign in to the Admin Panel.
 
 ## 4. Run the Admin Panel

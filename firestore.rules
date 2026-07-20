@@ -1,18 +1,34 @@
 rules_version = '2';
 
-// MPSC COMBINE AI — Firestore security rules.
+// MPSC COMBINE AI — Production Firestore security rules.
 //
-// Every student's own data (profile + AI Teacher chat history) lives under
-// students/{uid}, keyed by their Firebase Auth UID. A signed-in user may
-// only read/write their own subtree — never another student's.
+// ── Admin model ──────────────────────────────────────────────────────────
+// Admins are stored at `admins/{uid}` with a `role: "admin"` field. A user
+// is an admin only if BOTH the document exists AND role == "admin" — so
+// an admin can be demoted just by changing that field, without deleting
+// the document. This collection is never writable by any client; it must
+// be managed from the Firebase Console (or a trusted backend/Admin SDK)
+// by the project owner, so privilege escalation from inside either app
+// is impossible.
 //
+// ── Content model ────────────────────────────────────────────────────────
 // Content collections (subjects/chapters/notes/mcqs/pyqs/tests/
-// currentAffairs/videos/liveClasses) are readable by any signed-in student,
-// and writable ONLY by an authenticated Admin Panel user — i.e. someone
-// whose UID has a document in `admins/{uid}`. That allow-list itself is
-// never writable by any client; it must be added manually from the
-// Firebase Console by the project owner, so privilege escalation from
-// inside the app is impossible.
+// currentAffairs/videos/liveClasses) are:
+//   - Fully readable/writable by admins (including unpublished drafts).
+//   - Readable by any signed-in student ONLY when `published == true`.
+//     Documents without a `published` field are treated as published
+//     (default true), so existing/seeded content keeps working — set
+//     `published: false` on a document to hide it from students while
+//     it's being drafted.
+//   - Never writable by students.
+//
+// ── Per-student data ─────────────────────────────────────────────────────
+// Every student's own profile, progress and AI Teacher chat history lives
+// under `students/{uid}`, keyed by their Firebase Auth UID. A signed-in
+// user may only read/write their own subtree — never another student's,
+// and never an admin's own data implicitly (admins get no special access
+// to student subtrees here, since that isn't part of the Admin Panel's
+// scope).
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -22,71 +38,87 @@ service cloud.firestore {
 
     function isAdmin() {
       return isSignedIn() &&
-        exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role == 'admin';
     }
 
+    function isPublished() {
+      return resource.data.get('published', true) == true;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // ── Admin allow-list ────────────────────────────────────────────────
+    // A user may check ONLY their own admin status. No client (including
+    // admins) may create/modify/delete entries here.
+    match /admins/{uid} {
+      allow read: if isOwner(uid);
+      allow write: if false;
+    }
+
+    // ── Per-student data: profile, progress, AI Teacher chats ──────────
     match /students/{uid} {
-      allow read, write: if isSignedIn() && request.auth.uid == uid;
+      allow read, write: if isOwner(uid);
+
+      match /progress/{progressId} {
+        allow read, write: if isOwner(uid);
+      }
 
       match /chats/{chatId} {
-        allow read, write: if isSignedIn() && request.auth.uid == uid;
+        allow read, write: if isOwner(uid);
 
         match /messages/{messageId} {
-          allow read, write: if isSignedIn() && request.auth.uid == uid;
+          allow read, write: if isOwner(uid);
         }
       }
     }
 
-    // Admin allow-list: a user may check ONLY their own admin status.
-    // No client (including admins) may create/modify/delete entries here.
-    match /admins/{uid} {
-      allow read: if isSignedIn() && request.auth.uid == uid;
-      allow write: if false;
-    }
-
+    // ── Content collections: admin-managed, student-readable-if-published
     match /subjects/{subjectId} {
-      allow read: if isSignedIn();
-      allow write: if isAdmin();
+      allow read: if isAdmin() || (isSignedIn() && isPublished());
+      allow create, update, delete: if isAdmin();
     }
 
     match /chapters/{chapterId} {
-      allow read: if isSignedIn();
-      allow write: if isAdmin();
+      allow read: if isAdmin() || (isSignedIn() && isPublished());
+      allow create, update, delete: if isAdmin();
     }
 
     match /notes/{noteId} {
-      allow read: if isSignedIn();
-      allow write: if isAdmin();
+      allow read: if isAdmin() || (isSignedIn() && isPublished());
+      allow create, update, delete: if isAdmin();
     }
 
     match /mcqs/{mcqId} {
-      allow read: if isSignedIn();
-      allow write: if isAdmin();
+      allow read: if isAdmin() || (isSignedIn() && isPublished());
+      allow create, update, delete: if isAdmin();
     }
 
     match /pyqs/{pyqId} {
-      allow read: if isSignedIn();
-      allow write: if isAdmin();
+      allow read: if isAdmin() || (isSignedIn() && isPublished());
+      allow create, update, delete: if isAdmin();
     }
 
     match /tests/{testId} {
-      allow read: if isSignedIn();
-      allow write: if isAdmin();
+      allow read: if isAdmin() || (isSignedIn() && isPublished());
+      allow create, update, delete: if isAdmin();
     }
 
     match /currentAffairs/{itemId} {
-      allow read: if isSignedIn();
-      allow write: if isAdmin();
+      allow read: if isAdmin() || (isSignedIn() && isPublished());
+      allow create, update, delete: if isAdmin();
     }
 
     match /videos/{videoId} {
-      allow read: if isSignedIn();
-      allow write: if isAdmin();
+      allow read: if isAdmin() || (isSignedIn() && isPublished());
+      allow create, update, delete: if isAdmin();
     }
 
     match /liveClasses/{classId} {
-      allow read: if isSignedIn();
-      allow write: if isAdmin();
+      allow read: if isAdmin() || (isSignedIn() && isPublished());
+      allow create, update, delete: if isAdmin();
     }
 
     // Deny everything else by default.
