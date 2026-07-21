@@ -16,17 +16,32 @@ setup needed to use it.
 - **Content collections** (all top-level in Firestore):
   `subjects`, `chapters`, `notes`, `mcqs`, `pyqs`, `tests`, `currentAffairs`,
   `videos`, `liveClasses`.
-- **Admin allow-list**: `admins/{uid}` — a Firebase Auth user can open the
+- **Admin allow-list**: `admin/{uid}` — a Firebase Auth user can open the
   Admin Panel only if a document with their UID exists in this collection.
   This collection is **not writable by any client** (see `firestore.rules`),
   so it must be managed from the Firebase Console only.
 
-## 2. Deploy the updated Firestore rules
+  > ⚠️ **Collection name mismatch to resolve manually**: the app code
+  > (`AdminRepository`) now points at `admin/{uid}` (singular) to match the
+  > collection that already exists in this project's Firestore. The
+  > `firestore.rules` file was **intentionally left untouched** and still
+  > checks `admins/{uid}` (plural) — see `isAdmin()`. Until you update
+  > `firestore.rules` yourself to check `admin/{uid}` instead, the deployed
+  > security rules will never recognize any admin (the doc it looks for
+  > won't exist), so **all writes to content collections will be denied**
+  > even though the app's client-side login check will succeed. You must
+  > either edit `isAdmin()` in `firestore.rules` to use `admin` or rename
+  > your Firestore collection to `admins` — do one of these before relying
+  > on production writes.
 
-`firestore.rules` was updated to:
-- Allow any signed-in user to **read** all content collections.
-- Allow **write** only if the signed-in user's UID exists in `admins/{uid}`.
-- Keep `admins/{uid}` itself read-only-to-self and never client-writable.
+## 2. Deploy the Firestore rules
+
+`firestore.rules` (unedited — manage it yourself, see warning above):
+- Allows any signed-in user to **read** all content collections.
+- Allows **write** only if the signed-in user's UID exists in `admins/{uid}`
+  (plural — currently out of sync with the app's `admin/{uid}` lookup).
+- Keeps that allow-list collection itself read-only-to-self and never
+  client-writable.
 
 Deploy it via the Firebase Console (Firestore → Rules tab → paste the
 contents of `firestore.rules` → Publish), or with the Firebase CLI if you
@@ -40,7 +55,7 @@ firebase deploy --only firestore:rules
 
 1. Firebase Console → **Authentication** → **Add user** → enter an email +
    password for the admin (or reuse an existing student account's email).
-2. Firebase Console → **Firestore Database** → open the `admins`
+2. Firebase Console → **Firestore Database** → open the `admin`
    collection (create it if it doesn't exist) → **Add document**:
    - Document ID: the new user's **UID** (copy it from the Authentication
      tab, next to the user you just created).

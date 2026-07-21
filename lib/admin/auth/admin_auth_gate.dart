@@ -7,7 +7,7 @@ import 'package:mpsc_combine_ai/theme/app_colors.dart';
 
 /// Gatekeeper for the Admin Panel:
 /// 1. Signed out -> [AdminLoginScreen].
-/// 2. Signed in -> checks `admins/{uid}` in Firestore.
+/// 2. Signed in -> checks `admin/{uid}` in Firestore.
 ///    - Not an admin -> signs the user out and shows "Not authorized".
 ///    - Is an admin -> shows [child] (the Admin Dashboard).
 class AdminAuthGate extends StatelessWidget {

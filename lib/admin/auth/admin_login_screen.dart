@@ -5,7 +5,7 @@ import 'package:mpsc_combine_ai/theme/app_colors.dart';
 /// Email/password login for the Admin Panel.
 ///
 /// Reuses the same [AuthService]/Firebase Auth backend as the student app —
-/// the [AdminAuthGate] then separately checks the `admins/{uid}` allow-list
+/// the [AdminAuthGate] then separately checks the `admin/{uid}` allow-list
 /// before granting access to the dashboard.
 class AdminLoginScreen extends StatefulWidget {
   const AdminLoginScreen({super.key, this.notAuthorizedMessage});
