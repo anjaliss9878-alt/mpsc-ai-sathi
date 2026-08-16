@@ -9,7 +9,6 @@
 [functions]
   directory = "netlify/functions"
   node_bundler = "nft"
-  timeout = 26
 
 # AI backend (secrets live in Netlify env, not the Flutter JS bundle)
 [[redirects]]
