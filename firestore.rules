@@ -7,12 +7,12 @@ rules_version = '2';
 // only read/write their own subtree — never another student's.
 //
 // Content collections (subjects/chapters/notes/mcqs/pyqs/tests/
-// currentAffairs/videos/liveClasses) are readable by any signed-in student,
-// and writable ONLY by an authenticated Admin Panel user — i.e. someone
-// whose UID has a document in `admins/{uid}`. That allow-list itself is
-// never writable by any client; it must be added manually from the
-// Firebase Console by the project owner, so privilege escalation from
-// inside the app is impossible.
+// currentAffairs/videos/liveClasses) are readable by any signed-in student
+// (Admin Panel + Student App share the same top-level collections — there is
+// no separate student copy). Writes are admin-only (`admin/{uid}` or legacy
+// `admins/{uid}`). Draft vs published visibility is enforced in the app
+// (student streams filter `published != false`); rules stay signed-in-readable
+// so collection listeners never fail with permission-denied for students.
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -21,8 +21,13 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isSignedIn() &&
-        exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+      // App allow-list lives at `admin/{uid}` (singular). Older docs/rules
+      // used `admins` (plural) — accept either so production setups of both
+      // shapes keep working.
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admin/$(request.auth.uid)) ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
     }
 
     match /students/{uid} {
@@ -35,10 +40,57 @@ service cloud.firestore {
           allow read, write: if isSignedIn() && request.auth.uid == uid;
         }
       }
+
+      // AI Teacher Classroom lesson history — one document per generated
+      // lesson (question, script, slides, mcqs, notes, timestamp).
+      match /aiLessons/{lessonId} {
+        allow read, write: if isSignedIn() && request.auth.uid == uid;
+      }
+
+      // Per-student notification inbox, fanned out by the Admin Panel when
+      // a notification is sent (see notifications/{id} below). A student
+      // may read and mark-as-read their own inbox; only an admin may add
+      // new entries or remove them.
+      match /inbox/{notificationId} {
+        allow read: if isSignedIn() && request.auth.uid == uid;
+        allow create, delete: if isAdmin();
+        allow update: if isSignedIn() && request.auth.uid == uid;
+      }
+
+      match /dailyGoals/{goalId} {
+        allow read, write: if isSignedIn() && request.auth.uid == uid;
+      }
+      match /continueLearning/{sessionId} {
+        allow read, write: if isSignedIn() && request.auth.uid == uid;
+      }
+      match /classroomProgress/{chapterId} {
+        allow read, write: if isSignedIn() && request.auth.uid == uid;
+      }
+      match /bookmarks/{bookmarkId} {
+        allow read, write: if isSignedIn() && request.auth.uid == uid;
+      }
+      match /testAttempts/{attemptId} {
+        allow read, write: if isSignedIn() && request.auth.uid == uid;
+      }
+      match /certificates/{certId} {
+        allow read, write: if isSignedIn() && request.auth.uid == uid;
+      }
+      match /studyPlans/{planId} {
+        allow read, write: if isSignedIn() && request.auth.uid == uid;
+      }
+      match /videoProgress/{videoId} {
+        allow read, write: if isSignedIn() && request.auth.uid == uid;
+      }
     }
 
     // Admin allow-list: a user may check ONLY their own admin status.
     // No client (including admins) may create/modify/delete entries here.
+    // Support both singular (`admin`) and plural (`admins`) collection names.
+    match /admin/{uid} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow write: if false;
+    }
+
     match /admins/{uid} {
       allow read: if isSignedIn() && request.auth.uid == uid;
       allow write: if false;
@@ -87,6 +139,70 @@ service cloud.firestore {
     match /liveClasses/{classId} {
       allow read: if isSignedIn();
       allow write: if isAdmin();
+    }
+
+    match /faculty/{facultyId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Attendance: a student may create ONLY their own attendance record
+    // (uid on the new document must match their auth uid) and everyone
+    // signed in may read (Admin "Attendance" screen + the student's own "My
+    // Attendance" screen). Editing/deleting existing records is admin-only.
+    match /liveClassAttendance/{attendanceId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+
+    match /teachingSlides/{deckId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Admin-authored AI Teacher lessons (script/slides/quiz/notes), looked
+    // up by keyword before falling back to live Gemini generation.
+    match /aiTeacherContent/{contentId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /ai_lessons/{lessonId} {
+      allow read: if isSignedIn() && (
+        resource.data.uid == request.auth.uid || isAdmin()
+      );
+      allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
+      allow update: if isSignedIn() && (
+        resource.data.uid == request.auth.uid || isAdmin()
+      );
+      allow delete: if isAdmin() || (
+        isSignedIn() && resource.data.uid == request.auth.uid
+      );
+    }
+
+    match /ai_cache/{cacheId} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn();
+      allow delete: if isAdmin();
+    }
+
+    // Notification "send" records (history shown in the Admin Panel). The
+    // actual per-student copies live at students/{uid}/inbox/{id} above.
+    match /notifications/{notificationId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /auditLogs/{logId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Revenue source for the Dashboard. No client-side writer exists yet
+    // (a real payment/checkout flow would write these from a trusted
+    // backend, not directly from the app), so writes are denied entirely.
+    match /transactions/{transactionId} {
+      allow read: if isAdmin();
+      allow write: if false;
     }
 
     // Deny everything else by default.

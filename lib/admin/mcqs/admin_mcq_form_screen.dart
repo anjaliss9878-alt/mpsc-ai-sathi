@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:mpsc_combine_ai/admin/widgets/admin_scaffold.dart';
 import 'package:mpsc_combine_ai/admin/widgets/confirm_delete_dialog.dart';
 import 'package:mpsc_combine_ai/models/mcq_item.dart';
+import 'package:mpsc_combine_ai/services/audit_log_repository.dart';
 import 'package:mpsc_combine_ai/services/mcq_repository.dart';
 
 const List<String> _difficulties = ['Easy', 'Medium', 'Hard'];
@@ -24,6 +25,12 @@ class _AdminMcqFormScreenState extends State<AdminMcqFormScreen> {
       TextEditingController(text: widget.existing?.question ?? '');
   late final _explanationController =
       TextEditingController(text: widget.existing?.explanation ?? '');
+  late final _tagsController =
+      TextEditingController(text: (widget.existing?.tags ?? const []).join(', '));
+  late final _subjectIdController =
+      TextEditingController(text: widget.existing?.subjectId ?? '');
+  late final _chapterIdController =
+      TextEditingController(text: widget.existing?.chapterId ?? '');
   late final List<TextEditingController> _optionControllers = List.generate(
     4,
     (i) => TextEditingController(
@@ -34,6 +41,7 @@ class _AdminMcqFormScreenState extends State<AdminMcqFormScreen> {
   );
   late String _difficulty = widget.existing?.difficulty ?? 'Medium';
   late int _correctIndex = widget.existing?.correctIndex ?? 0;
+  late bool _published = widget.existing?.published ?? true;
   bool _isSaving = false;
 
   @override
@@ -42,6 +50,9 @@ class _AdminMcqFormScreenState extends State<AdminMcqFormScreen> {
     _subjectController.dispose();
     _questionController.dispose();
     _explanationController.dispose();
+    _tagsController.dispose();
+    _subjectIdController.dispose();
+    _chapterIdController.dispose();
     for (final c in _optionControllers) {
       c.dispose();
     }
@@ -68,11 +79,21 @@ class _AdminMcqFormScreenState extends State<AdminMcqFormScreen> {
         correctIndex: _correctIndex,
         explanation: _explanationController.text.trim(),
         order: widget.existing?.order ?? DateTime.now().millisecondsSinceEpoch,
+        tags: _tagsController.text
+            .split(',')
+            .map((t) => t.trim())
+            .where((t) => t.isNotEmpty)
+            .toList(),
+        subjectId: _subjectIdController.text.trim(),
+        chapterId: _chapterIdController.text.trim(),
+        published: _published,
       );
       if (widget.existing == null) {
         await mcqRepository.add(item);
+        await auditLogRepository.log(action: 'create', module: 'MCQs', targetLabel: item.question);
       } else {
         await mcqRepository.update(item);
+        await auditLogRepository.log(action: 'update', module: 'MCQs', targetLabel: item.question);
       }
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
@@ -99,7 +120,32 @@ class _AdminMcqFormScreenState extends State<AdminMcqFormScreen> {
         const SizedBox(height: 14),
         TextField(
           controller: _subjectController,
-          decoration: const InputDecoration(labelText: 'Subject (e.g. Polity)'),
+          decoration: const InputDecoration(
+            labelText: 'Subject label (e.g. राज्यशास्त्र)',
+          ),
+        ),
+        const SizedBox(height: 14),
+        TextField(
+          controller: _subjectIdController,
+          decoration: const InputDecoration(
+            labelText: 'subjectId (Firestore subjects/{id})',
+            hintText: 'Paste from Notes → Subject',
+          ),
+        ),
+        const SizedBox(height: 14),
+        TextField(
+          controller: _chapterIdController,
+          decoration: const InputDecoration(
+            labelText: 'chapterId / topicId (Firestore chapters/{id})',
+            hintText: 'Paste from Notes → Chapter',
+          ),
+        ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Published'),
+          subtitle: Text(_published ? 'Visible in student MCQ सराव' : 'Draft'),
+          value: _published,
+          onChanged: (v) => setState(() => _published = v),
         ),
         const SizedBox(height: 14),
         DropdownButtonFormField<String>(
@@ -144,6 +190,14 @@ class _AdminMcqFormScreenState extends State<AdminMcqFormScreen> {
           minLines: 2,
           maxLines: 4,
           decoration: const InputDecoration(labelText: 'Explanation'),
+        ),
+        const AdminSectionLabel(label: 'Tags (optional)'),
+        TextField(
+          controller: _tagsController,
+          decoration: const InputDecoration(
+            labelText: 'Comma separated tags',
+            hintText: 'e.g. Modern History, 2024, Important',
+          ),
         ),
       ],
     );

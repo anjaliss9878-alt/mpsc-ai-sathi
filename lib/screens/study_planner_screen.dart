@@ -1,121 +1,288 @@
 import 'package:flutter/material.dart';
+import 'package:mpsc_combine_ai/models/study_plan.dart';
+import 'package:mpsc_combine_ai/screens/mock_tests_screen.dart';
+import 'package:mpsc_combine_ai/screens/revision/revision_hub_screen.dart';
+import 'package:mpsc_combine_ai/screens/study_goal_screen.dart';
+import 'package:mpsc_combine_ai/screens/subject_notes_screen.dart';
+import 'package:mpsc_combine_ai/services/auth_service.dart';
+import 'package:mpsc_combine_ai/services/profile_repository.dart';
+import 'package:mpsc_combine_ai/services/student_progress_repository.dart';
+import 'package:mpsc_combine_ai/services/study_planner_service.dart';
 import 'package:mpsc_combine_ai/theme/app_colors.dart';
-import 'package:mpsc_combine_ai/widgets/feature_screen_scaffold.dart';
 
-class StudyPlannerScreen extends StatelessWidget {
+class StudyPlannerScreen extends StatefulWidget {
   const StudyPlannerScreen({super.key});
 
   @override
+  State<StudyPlannerScreen> createState() => _StudyPlannerScreenState();
+}
+
+class _StudyPlannerScreenState extends State<StudyPlannerScreen> {
+  bool _generating = false;
+  String? _error;
+
+  Future<void> _generate() async {
+    final uid = authService.currentUser?.uid;
+    if (uid == null) {
+      setState(() => _error = 'Sign in to generate and sync your study plan.');
+      return;
+    }
+    setState(() {
+      _generating = true;
+      _error = null;
+    });
+    try {
+      final profile = await profileRepository.getProfile(uid);
+      final plan = await studyPlannerService.generateWeeklyPlan(
+        targetExam: profile?.targetExam.isNotEmpty == true
+            ? profile!.targetExam
+            : 'MPSC Combine',
+      );
+      await studentProgressRepository.saveStudyPlan(uid, plan);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Weekly plan saved to your account.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = 'Could not generate plan: $e');
+    } finally {
+      if (mounted) setState(() => _generating = false);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return FeatureScreenScaffold(
-      title: 'Study Planner',
-      icon: Icons.calendar_month_rounded,
-      description:
-          'Plan your daily study schedule, set targets, and track syllabus completion for MPSC Combine.',
-      headerAction: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [
-              AppColors.navy.withValues(alpha: 0.08),
-              AppColors.orange.withValues(alpha: 0.08),
-            ],
-          ),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: const Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'This Week',
-              style: TextStyle(
-                fontWeight: FontWeight.w700,
-                color: AppColors.textPrimary,
-              ),
+    final uid = authService.currentUser?.uid;
+    return Scaffold(
+      appBar: AppBar(title: const Text('Study Planner')),
+      body: uid == null
+          ? const Center(child: Text('Sign in to use the AI study planner.'))
+          : StreamBuilder<StudyPlan?>(
+              stream: studentProgressRepository.watchCurrentStudyPlan(uid),
+              builder: (context, planSnap) {
+                final plan = planSnap.data;
+                return ListView(
+                  padding: const EdgeInsets.all(16),
+                  children: [
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'AI Weekly Planner',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .titleMedium
+                                  ?.copyWith(fontWeight: FontWeight.w800),
+                            ),
+                            const SizedBox(height: 6),
+                            const Text(
+                              'Generate a Gemini-backed timetable with daily slots, weekly goals, and revision reminders — synced to Firebase.',
+                              style: TextStyle(color: AppColors.textSecondary),
+                            ),
+                            const SizedBox(height: 12),
+                            StreamBuilder(
+                              stream:
+                                  studentProgressRepository.watchTodayGoal(uid),
+                              builder: (context, goalSnap) {
+                                final goal = goalSnap.data;
+                                final done = goal?.completedCount ?? 0;
+                                final total = goal?.totalCount ?? 4;
+                                return Text(
+                                  "Today's goal: $done / $total tasks",
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.navy,
+                                  ),
+                                );
+                              },
+                            ),
+                            const SizedBox(height: 12),
+                            FilledButton.icon(
+                              onPressed: _generating ? null : _generate,
+                              icon: _generating
+                                  ? const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Colors.white,
+                                      ),
+                                    )
+                                  : const Icon(Icons.auto_awesome_rounded),
+                              label: Text(
+                                _generating
+                                    ? 'Generating…'
+                                    : (plan == null
+                                        ? 'Generate this week\'s plan'
+                                        : 'Regenerate plan'),
+                              ),
+                            ),
+                            if (_error != null) ...[
+                              const SizedBox(height: 8),
+                              Text(_error!,
+                                  style: const TextStyle(color: Colors.red)),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        _QuickChip(
+                          label: "Today's Goal",
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => const StudyGoalScreen(),
+                            ),
+                          ),
+                        ),
+                        _QuickChip(
+                          label: 'Notes',
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => const SubjectNotesScreen(),
+                            ),
+                          ),
+                        ),
+                        _QuickChip(
+                          label: 'Revision',
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => const RevisionHubScreen(),
+                            ),
+                          ),
+                        ),
+                        _QuickChip(
+                          label: 'Mock Test',
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => const MockTestsScreen(),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    if (plan == null)
+                      const Card(
+                        child: Padding(
+                          padding: EdgeInsets.all(20),
+                          child: Text(
+                            'No plan for this week yet. Tap Generate to create one.',
+                            style: TextStyle(color: AppColors.textSecondary),
+                          ),
+                        ),
+                      )
+                    else ...[
+                      Text(
+                        plan.title,
+                        style: Theme.of(context)
+                            .textTheme
+                            .titleLarge
+                            ?.copyWith(fontWeight: FontWeight.w800),
+                      ),
+                      if (plan.summary.isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          plan.summary,
+                          style: const TextStyle(color: AppColors.textSecondary),
+                        ),
+                      ],
+                      const SizedBox(height: 16),
+                      Text(
+                        'Weekly goals',
+                        style: Theme.of(context)
+                            .textTheme
+                            .titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w700),
+                      ),
+                      const SizedBox(height: 8),
+                      ...plan.weeklyGoals.map(
+                        (g) => ListTile(
+                          dense: true,
+                          leading: const Icon(Icons.flag_rounded,
+                              color: AppColors.orange),
+                          title: Text(g),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Daily timetable',
+                        style: Theme.of(context)
+                            .textTheme
+                            .titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w700),
+                      ),
+                      const SizedBox(height: 8),
+                      ...plan.dailySlots.map(
+                        (day) => Card(
+                          child: ExpansionTile(
+                            title: Text(
+                              day.dayLabel,
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                            children: day.slots
+                                .map(
+                                  (slot) => ListTile(
+                                    dense: true,
+                                    leading: const Icon(
+                                      Icons.schedule_rounded,
+                                      color: AppColors.navy,
+                                    ),
+                                    title: Text(slot),
+                                  ),
+                                )
+                                .toList(),
+                          ),
+                        ),
+                      ),
+                      if (plan.revisionReminders.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          'Revision reminders',
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleMedium
+                              ?.copyWith(fontWeight: FontWeight.w700),
+                        ),
+                        ...plan.revisionReminders.map(
+                          (r) => ListTile(
+                            dense: true,
+                            leading: const Icon(Icons.notifications_active_rounded,
+                                color: AppColors.navy),
+                            title: Text(r),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ],
+                );
+              },
             ),
-            SizedBox(height: 8),
-            Row(
-              children: [
-                _DayDot(label: 'M', active: true, done: true),
-                _DayDot(label: 'T', active: true, done: true),
-                _DayDot(label: 'W', active: true, done: false),
-                _DayDot(label: 'T', active: false, done: false),
-                _DayDot(label: 'F', active: false, done: false),
-                _DayDot(label: 'S', active: false, done: false),
-                _DayDot(label: 'S', active: false, done: false),
-              ],
-            ),
-          ],
-        ),
-      ),
-      items: const [
-        PlaceholderListItem(
-          title: "Today's Plan",
-          subtitle: 'Polity Ch.5 + 30 MCQs + CA revision',
-          icon: Icons.today_rounded,
-        ),
-        PlaceholderListItem(
-          title: 'Weekly Schedule',
-          subtitle: 'Mon–Sun study timetable',
-          icon: Icons.view_week_rounded,
-        ),
-        PlaceholderListItem(
-          title: 'Syllabus Tracker',
-          subtitle: 'Track completed vs pending topics',
-          icon: Icons.checklist_rounded,
-        ),
-        PlaceholderListItem(
-          title: 'Set Reminders',
-          subtitle: 'Daily study alerts and goals',
-          icon: Icons.alarm_rounded,
-        ),
-      ],
     );
   }
 }
 
-class _DayDot extends StatelessWidget {
-  const _DayDot({
-    required this.label,
-    required this.active,
-    required this.done,
-  });
+class _QuickChip extends StatelessWidget {
+  const _QuickChip({required this.label, required this.onTap});
 
   final String label;
-  final bool active;
-  final bool done;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Expanded(
-      child: Column(
-        children: [
-          Container(
-            width: 32,
-            height: 32,
-            decoration: BoxDecoration(
-              color: done
-                  ? AppColors.orange
-                  : active
-                      ? AppColors.navy.withValues(alpha: 0.12)
-                      : AppColors.navy.withValues(alpha: 0.05),
-              shape: BoxShape.circle,
-            ),
-            alignment: Alignment.center,
-            child: done
-                ? const Icon(Icons.check_rounded, color: Colors.white, size: 16)
-                : Text(
-                    label,
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 12,
-                      color: active ? AppColors.navy : AppColors.textSecondary,
-                    ),
-                  ),
-          ),
-        ],
-      ),
+    return ActionChip(
+      label: Text(label),
+      onPressed: onTap,
+      backgroundColor: AppColors.navy.withValues(alpha: 0.06),
     );
   }
 }

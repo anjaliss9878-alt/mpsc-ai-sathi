@@ -1,3 +1,5 @@
+import 'package:mpsc_combine_ai/utils/json_list.dart';
+
 /// A single MCQ practice question, stored in Firestore at `mcqs/{id}`.
 ///
 /// Questions are grouped into practice "sets" purely by [setTitle] — the
@@ -14,10 +16,16 @@ class McqItem {
     required this.correctIndex,
     required this.explanation,
     required this.order,
+    this.tags = const [],
+    this.subjectId = '',
+    this.chapterId = '',
+    this.published = true,
   });
 
   final String id;
   final String setTitle;
+
+  /// Free-text subject label (legacy). Prefer [subjectId] when linking.
   final String subject;
   final String difficulty;
   final String question;
@@ -26,6 +34,18 @@ class McqItem {
   final String explanation;
   final int order;
 
+  /// Free-form labels (e.g. topic, exam year) used for search/filtering in
+  /// both the Admin Panel and Bulk Upload de-duplication.
+  final List<String> tags;
+
+  /// Firestore `subjects/{id}` link (optional; empty for legacy rows).
+  final String subjectId;
+
+  /// Firestore `chapters/{id}` link (optional).
+  final String chapterId;
+
+  final bool published;
+
   factory McqItem.fromMap(Map<String, dynamic> map, String id) {
     return McqItem(
       id: id,
@@ -33,10 +53,14 @@ class McqItem {
       subject: map['subject'] as String? ?? '',
       difficulty: map['difficulty'] as String? ?? 'Medium',
       question: map['question'] as String? ?? '',
-      options: List<String>.from(map['options'] as List? ?? const []),
+      options: asStringList(map['options']),
       correctIndex: (map['correctIndex'] as num?)?.toInt() ?? 0,
       explanation: map['explanation'] as String? ?? '',
       order: (map['order'] as num?)?.toInt() ?? 0,
+      tags: asStringList(map['tags']),
+      subjectId: map['subjectId'] as String? ?? '',
+      chapterId: map['chapterId'] as String? ?? '',
+      published: map['published'] as bool? ?? true,
     );
   }
 
@@ -50,6 +74,10 @@ class McqItem {
       'correctIndex': correctIndex,
       'explanation': explanation,
       'order': order,
+      'tags': tags,
+      'subjectId': subjectId,
+      'chapterId': chapterId,
+      'published': published,
       'updatedAt': DateTime.now().toIso8601String(),
     };
   }

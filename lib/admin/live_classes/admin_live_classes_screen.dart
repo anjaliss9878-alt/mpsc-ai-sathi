@@ -4,6 +4,7 @@ import 'package:mpsc_combine_ai/admin/widgets/admin_list_tile.dart';
 import 'package:mpsc_combine_ai/admin/widgets/admin_scaffold.dart';
 import 'package:mpsc_combine_ai/admin/widgets/confirm_delete_dialog.dart';
 import 'package:mpsc_combine_ai/models/live_class_item.dart';
+import 'package:mpsc_combine_ai/services/audit_log_repository.dart';
 import 'package:mpsc_combine_ai/services/live_class_repository.dart';
 import 'package:mpsc_combine_ai/widgets/async_state_widgets.dart';
 
@@ -39,9 +40,19 @@ class AdminLiveClassesScreen extends StatelessWidget {
             itemCount: items.length,
             itemBuilder: (context, index) {
               final item = items[index];
+              final scheduleLabel = item.hasSchedule
+                  ? '${item.scheduledAt.day}/${item.scheduledAt.month} '
+                      '${TimeOfDay.fromDateTime(item.scheduledAt).format(context)}'
+                  : item.scheduleText;
+              final subtitleParts = [
+                item.status.toUpperCase(),
+                item.subject,
+                if (item.facultyName.isNotEmpty) item.facultyName,
+                scheduleLabel,
+              ].where((s) => s.isNotEmpty);
               return AdminListTile(
                 title: item.title,
-                subtitle: '${item.status.toUpperCase()} · ${item.subject} · ${item.scheduleText}',
+                subtitle: subtitleParts.join(' · '),
                 icon: Icons.live_tv_rounded,
                 onEdit: () => Navigator.of(context).push(
                   MaterialPageRoute<void>(
@@ -53,6 +64,7 @@ class AdminLiveClassesScreen extends StatelessWidget {
                   if (!confirmed) return;
                   try {
                     await liveClassRepository.delete(item.id);
+                    await auditLogRepository.log(action: 'delete', module: 'Live Classes', targetLabel: item.title);
                     if (context.mounted) showAdminMessage(context, 'Live class deleted.');
                   } catch (e) {
                     if (context.mounted) showAdminError(context, e);

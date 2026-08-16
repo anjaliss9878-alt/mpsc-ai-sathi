@@ -4,6 +4,7 @@ import 'package:mpsc_combine_ai/admin/widgets/admin_list_tile.dart';
 import 'package:mpsc_combine_ai/admin/widgets/admin_scaffold.dart';
 import 'package:mpsc_combine_ai/admin/widgets/confirm_delete_dialog.dart';
 import 'package:mpsc_combine_ai/models/current_affair_item.dart';
+import 'package:mpsc_combine_ai/services/audit_log_repository.dart';
 import 'package:mpsc_combine_ai/services/current_affairs_repository.dart';
 import 'package:mpsc_combine_ai/utils/date_format.dart';
 import 'package:mpsc_combine_ai/widgets/async_state_widgets.dart';
@@ -56,6 +57,7 @@ class AdminCurrentAffairsScreen extends StatelessWidget {
                   if (!confirmed) return;
                   try {
                     await currentAffairsRepository.delete(item.id);
+                    await auditLogRepository.log(action: 'delete', module: 'Current Affairs', targetLabel: item.title);
                     if (context.mounted) showAdminMessage(context, 'Entry deleted.');
                   } catch (e) {
                     if (context.mounted) showAdminError(context, e);

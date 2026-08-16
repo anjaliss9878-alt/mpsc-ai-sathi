@@ -1,4 +1,5 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 
 /// Thrown by [AuthService] with a message that is safe to show directly to
 /// the student (already translated into a friendly Marathi/English string).
@@ -59,6 +60,17 @@ class AuthService {
     required String email,
     required String password,
   }) async {
+    // TEMPORARY DEBUG INSTRUMENTATION — remove once auth/invalid-credential
+    // is root-caused. Prints to the browser console / `flutter run` terminal
+    // (DWDS mirrors dart:core print() to both for `flutter run -d chrome`).
+    // ignore: avoid_print
+    print(
+      '[AUTH DEBUG] projectId=${Firebase.app().options.projectId} '
+      'apiKey=${Firebase.app().options.apiKey} '
+      'authDomain=${Firebase.app().options.authDomain} '
+      'emailTrimmed="${email.trim()}" emailLength=${email.trim().length} '
+      'passwordLength=${password.length}',
+    );
     try {
       final credential = await _auth.signInWithEmailAndPassword(
         email: email.trim(),
@@ -71,12 +83,18 @@ class AuthService {
           '(Could not log in. Please try again.)',
         );
       }
+      // ignore: avoid_print
+      print('[AUTH DEBUG] signIn SUCCESS uid=${user.uid}');
       return user;
     } on FirebaseAuthException catch (e) {
+      // ignore: avoid_print
+      print('[AUTH DEBUG] FirebaseAuthException code="${e.code}" message="${e.message}"');
       throw AuthException(_messageFor(e));
     } on AuthException {
       rethrow;
-    } catch (_) {
+    } catch (e) {
+      // ignore: avoid_print
+      print('[AUTH DEBUG] Unexpected error: $e');
       throw const AuthException(_genericAuthError);
     }
   }

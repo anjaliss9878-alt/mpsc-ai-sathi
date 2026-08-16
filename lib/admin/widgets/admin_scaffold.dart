@@ -46,17 +46,24 @@ class AdminFormScaffold extends StatelessWidget {
     required this.children,
     required this.onSave,
     this.isSaving = false,
+    this.canSave = true,
     this.saveLabel = 'Save',
+    this.maxContentWidth = 700,
   });
 
   final String title;
   final List<Widget> children;
   final VoidCallback onSave;
   final bool isSaving;
+
+  /// When false, Save stays disabled (e.g. async form load / uploads in flight).
+  final bool canSave;
   final String saveLabel;
+  final double maxContentWidth;
 
   @override
   Widget build(BuildContext context) {
+    final saveEnabled = canSave && !isSaving;
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
@@ -65,7 +72,7 @@ class AdminFormScaffold extends StatelessWidget {
       body: SafeArea(
         child: Center(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 700),
+            constraints: BoxConstraints(maxWidth: maxContentWidth),
             child: ListView(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
               children: children,
@@ -87,7 +94,7 @@ class AdminFormScaffold extends StatelessWidget {
                   borderRadius: BorderRadius.circular(12),
                 ),
               ),
-              onPressed: isSaving ? null : onSave,
+              onPressed: saveEnabled ? onSave : null,
               icon: isSaving
                   ? const SizedBox(
                       width: 18,

@@ -1,0 +1,39 @@
+[build]
+  command = "bash tool/netlify_build.sh"
+  publish = "build/web"
+
+[build.environment]
+  NODE_VERSION = "20"
+  FLUTTER_VERSION = "3.44.4"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "nft"
+  timeout = 26
+
+# AI backend (secrets live in Netlify env, not the Flutter JS bundle)
+[[redirects]]
+  from = "/health"
+  to = "/.netlify/functions/health"
+  status = 200
+
+[[redirects]]
+  from = "/ai/lesson"
+  to = "/.netlify/functions/ai-lesson"
+  status = 200
+
+[[redirects]]
+  from = "/ai/doubt"
+  to = "/.netlify/functions/ai-doubt"
+  status = 200
+
+[[redirects]]
+  from = "/ai/tts"
+  to = "/.netlify/functions/ai-tts"
+  status = 200
+
+# Flutter web SPA fallback
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

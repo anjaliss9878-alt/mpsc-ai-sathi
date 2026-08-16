@@ -1,18 +1,28 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mpsc_combine_ai/models/chat_message.dart';
 import 'package:mpsc_combine_ai/models/chat_session.dart';
 import 'package:mpsc_combine_ai/models/chat_subject.dart';
+import 'package:mpsc_combine_ai/services/ai_avatar_service.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_service.dart';
 import 'package:mpsc_combine_ai/services/auth_service.dart';
 import 'package:mpsc_combine_ai/services/chat_repository.dart';
 import 'package:mpsc_combine_ai/theme/app_colors.dart';
 import 'package:mpsc_combine_ai/utils/chat_categorizer.dart';
+import 'package:mpsc_combine_ai/widgets/ai_avatar_widgets.dart';
 import 'package:mpsc_combine_ai/widgets/chat_widgets.dart';
 import 'package:share_plus/share_plus.dart';
 
 class AiTeacherScreen extends StatefulWidget {
-  const AiTeacherScreen({super.key});
+  const AiTeacherScreen({
+    super.key,
+    this.hideOuterChrome = false,
+  });
+
+  /// When embedded in [AiTeacherHubScreen], hide back button and outer title.
+  final bool hideOuterChrome;
 
   @override
   State<AiTeacherScreen> createState() => _AiTeacherScreenState();
@@ -31,6 +41,14 @@ class _AiTeacherScreenState extends State<AiTeacherScreen> {
   String? _errorMessage;
   String? _lastUserMessage;
 
+  // AI Avatar module: only one message can be "speaking" at a time via the
+  // single shared [aiAvatarProvider]. Correlated by timestamp because
+  // [ChatMessage.copyWith] (used once a message's Firestore id resolves)
+  // preserves the original timestamp even though it's a new object.
+  StreamSubscription<AvatarPlaybackState>? _avatarSubscription;
+  AvatarPlaybackState _avatarState = AvatarPlaybackState.idle;
+  DateTime? _activeAvatarTimestamp;
+
   static const List<String> _quickSuggestions = [
     'एक शंका विचारा',
     'हा विषय सोप्या भाषेत समजावून सांगा',
@@ -45,6 +63,10 @@ class _AiTeacherScreenState extends State<AiTeacherScreen> {
     super.initState();
     _messages.add(_welcomeMessage());
     _loadMostRecentChat();
+    _avatarSubscription = aiAvatarProvider.stateStream.listen((state) {
+      if (!mounted) return;
+      setState(() => _avatarState = state);
+    });
   }
 
   /// Resumes the student's last active chat automatically after login,
@@ -88,7 +110,35 @@ class _AiTeacherScreenState extends State<AiTeacherScreen> {
   void dispose() {
     _inputController.dispose();
     _scrollController.dispose();
+    _avatarSubscription?.cancel();
+    aiAvatarProvider.stop();
     super.dispose();
+  }
+
+  // ─── AI Avatar (voice output) ───────────────────────────────────────────
+
+  void _resetAvatar() {
+    _activeAvatarTimestamp = null;
+    aiAvatarProvider.stop();
+  }
+
+  Future<void> _toggleAvatarPlayback(ChatMessage message) async {
+    final isActiveMessage = _activeAvatarTimestamp == message.timestamp;
+    if (!isActiveMessage) {
+      setState(() => _activeAvatarTimestamp = message.timestamp);
+      await aiAvatarProvider.speak(message.content);
+      return;
+    }
+    switch (_avatarState) {
+      case AvatarPlaybackState.speaking:
+        await aiAvatarProvider.pause();
+      case AvatarPlaybackState.paused:
+        await aiAvatarProvider.resume();
+      case AvatarPlaybackState.idle:
+      case AvatarPlaybackState.error:
+      case AvatarPlaybackState.loading:
+        await aiAvatarProvider.speak(message.content);
+    }
   }
 
   ChatMessage _welcomeMessage() {
@@ -129,6 +179,7 @@ class _AiTeacherScreenState extends State<AiTeacherScreen> {
 
   void _startNewChat() {
     if (_isLoading) return;
+    _resetAvatar();
     setState(() {
       _messages
         ..clear()
@@ -148,6 +199,7 @@ class _AiTeacherScreenState extends State<AiTeacherScreen> {
     final uid = _uid;
     if (uid == null) return;
     Navigator.of(context).pop(); // close the drawer
+    _resetAvatar();
 
     setState(() {
       _isSwitchingChat = true;
@@ -442,36 +494,70 @@ class _AiTeacherScreenState extends State<AiTeacherScreen> {
 
     return Scaffold(
       key: _scaffoldKey,
-      appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('AI Teacher', style: TextStyle(fontWeight: FontWeight.w600)),
-            if (_activeSubject != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 2),
-                child: ChatSubjectBadge(subject: _activeSubject!, dense: true, onDark: true),
+      appBar: widget.hideOuterChrome
+          ? AppBar(
+              toolbarHeight: 48,
+              automaticallyImplyLeading: false,
+              title: _activeSubject != null
+                  ? ChatSubjectBadge(
+                      subject: _activeSubject!,
+                      dense: true,
+                      onDark: true,
+                    )
+                  : const Text(
+                      'Ask Doubts',
+                      style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+                    ),
+              actions: [
+                IconButton(
+                  tooltip: 'नवीन चॅट (New Chat)',
+                  icon: const Icon(Icons.add_comment_outlined),
+                  onPressed: _isLoading ? null : _startNewChat,
+                ),
+                IconButton(
+                  tooltip: 'चॅट इतिहास (History)',
+                  icon: const Icon(Icons.history_rounded),
+                  onPressed: () => _scaffoldKey.currentState?.openEndDrawer(),
+                ),
+              ],
+            )
+          : AppBar(
+              title: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'AI Teacher',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  if (_activeSubject != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: ChatSubjectBadge(
+                        subject: _activeSubject!,
+                        dense: true,
+                        onDark: true,
+                      ),
+                    ),
+                ],
               ),
-          ],
-        ),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_rounded),
-          onPressed: () => Navigator.of(context).pop(),
-        ),
-        actions: [
-          IconButton(
-            tooltip: 'नवीन चॅट (New Chat)',
-            icon: const Icon(Icons.add_comment_outlined),
-            onPressed: _isLoading ? null : _startNewChat,
-          ),
-          IconButton(
-            tooltip: 'चॅट इतिहास (History)',
-            icon: const Icon(Icons.history_rounded),
-            onPressed: () => _scaffoldKey.currentState?.openEndDrawer(),
-          ),
-        ],
-      ),
+              leading: IconButton(
+                icon: const Icon(Icons.arrow_back_rounded),
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+              actions: [
+                IconButton(
+                  tooltip: 'नवीन चॅट (New Chat)',
+                  icon: const Icon(Icons.add_comment_outlined),
+                  onPressed: _isLoading ? null : _startNewChat,
+                ),
+                IconButton(
+                  tooltip: 'चॅट इतिहास (History)',
+                  icon: const Icon(Icons.history_rounded),
+                  onPressed: () => _scaffoldKey.currentState?.openEndDrawer(),
+                ),
+              ],
+            ),
       endDrawer: ChatHistoryDrawer(
         uid: _uid,
         activeChatId: _activeChatId,
@@ -507,12 +593,27 @@ class _AiTeacherScreenState extends State<AiTeacherScreen> {
                                   index == _messages.length - 1 &&
                                   index > 0 &&
                                   !_isLoading;
-                              return ChatBubble(
+                              final bubble = ChatBubble(
                                 message: message,
                                 onCopy: () => _copyMessage(message),
                                 onShare: () => _shareMessage(message),
                                 onRegenerate:
                                     isLastAssistant ? () => _regenerate(message) : null,
+                              );
+                              if (message.isUser) return bubble;
+                              // AI Avatar module: a voice/animated-avatar header
+                              // above each AI answer. The chat bubble itself
+                              // (Markdown, copy/share/regenerate) is untouched.
+                              return Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  AiAvatarHeader(
+                                    isActive: _activeAvatarTimestamp == message.timestamp,
+                                    state: _avatarState,
+                                    onTogglePlay: () => _toggleAvatarPlayback(message),
+                                  ),
+                                  bubble,
+                                ],
                               );
                             }
                             if (_isLoading) {
@@ -536,6 +637,84 @@ class _AiTeacherScreenState extends State<AiTeacherScreen> {
                     },
                     horizontalPadding: horizontalPadding,
                   ),
+                Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    horizontalPadding,
+                    0,
+                    horizontalPadding,
+                    6,
+                  ),
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      ActionChip(
+                        avatar: const Icon(Icons.mic_none_rounded, size: 18),
+                        label: const Text('Voice doubt'),
+                        onPressed: _isLoading
+                            ? null
+                            : () async {
+                                final text = await showDialog<String>(
+                                  context: context,
+                                  builder: (ctx) {
+                                    final c = TextEditingController();
+                                    return AlertDialog(
+                                      title: const Text('Voice / dictate doubt'),
+                                      content: TextField(
+                                        controller: c,
+                                        autofocus: true,
+                                        maxLines: 3,
+                                        decoration: const InputDecoration(
+                                          hintText: 'Type or paste dictated question',
+                                          prefixIcon: Icon(Icons.mic_rounded),
+                                        ),
+                                      ),
+                                      actions: [
+                                        TextButton(
+                                          onPressed: () => Navigator.pop(ctx),
+                                          child: const Text('Cancel'),
+                                        ),
+                                        FilledButton(
+                                          onPressed: () =>
+                                              Navigator.pop(ctx, c.text),
+                                          child: const Text('Ask'),
+                                        ),
+                                      ],
+                                    );
+                                  },
+                                );
+                                if (text != null && text.trim().isNotEmpty) {
+                                  await _sendUserMessage(text.trim());
+                                }
+                              },
+                      ),
+                      ActionChip(
+                        avatar: const Icon(Icons.border_color_rounded, size: 18),
+                        label: const Text('Whiteboard'),
+                        onPressed: _isLoading
+                            ? null
+                            : () {
+                                showModalBottomSheet<void>(
+                                  context: context,
+                                  isScrollControlled: true,
+                                  builder: (ctx) => const _SimpleWhiteboardSheet(),
+                                );
+                              },
+                      ),
+                      ActionChip(
+                        avatar: const Icon(Icons.auto_awesome_rounded, size: 18),
+                        label: const Text('Diagram'),
+                        onPressed: _isLoading
+                            ? null
+                            : () => _sendUserMessage(
+                                  'Generate a clear exam-oriented diagram description '
+                                  'or ASCII/Markdown diagram for the current topic, '
+                                  'with labeled parts I can revise from.',
+                                ),
+                      ),
+                    ],
+                  ),
+                ),
                 ChatMessageInputBar(
                   controller: _inputController,
                   enabled: !_isLoading && !_isSwitchingChat,
@@ -549,4 +728,94 @@ class _AiTeacherScreenState extends State<AiTeacherScreen> {
       ),
     );
   }
+}
+
+/// Lightweight scratch whiteboard — freehand notes while chatting with AI Teacher.
+class _SimpleWhiteboardSheet extends StatefulWidget {
+  const _SimpleWhiteboardSheet();
+
+  @override
+  State<_SimpleWhiteboardSheet> createState() => _SimpleWhiteboardSheetState();
+}
+
+class _SimpleWhiteboardSheetState extends State<_SimpleWhiteboardSheet> {
+  final List<Offset?> _points = [];
+
+  @override
+  Widget build(BuildContext context) {
+    final height = MediaQuery.sizeOf(context).height * 0.55;
+    return SafeArea(
+      child: SizedBox(
+        height: height,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      'Whiteboard',
+                      style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () => setState(_points.clear),
+                    child: const Text('Clear'),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: Container(
+                margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.navy.withValues(alpha: 0.12)),
+                ),
+                child: GestureDetector(
+                  onPanUpdate: (d) => setState(() => _points.add(d.localPosition)),
+                  onPanEnd: (_) => setState(() => _points.add(null)),
+                  child: CustomPaint(
+                    painter: _BoardPainter(_points),
+                    size: Size.infinite,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BoardPainter extends CustomPainter {
+  _BoardPainter(this.points);
+
+  final List<Offset?> points;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = AppColors.navy
+      ..strokeWidth = 2.4
+      ..strokeCap = StrokeCap.round
+      ..style = PaintingStyle.stroke;
+    for (var i = 0; i < points.length - 1; i++) {
+      final a = points[i];
+      final b = points[i + 1];
+      if (a != null && b != null) {
+        canvas.drawLine(a, b, paint);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _BoardPainter oldDelegate) => true;
 }

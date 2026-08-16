@@ -19,6 +19,28 @@ class PyqRepository {
         );
   }
 
+  Stream<List<PyqItem>> watchPublished() {
+    return watchAll().map((all) => all.where((p) => p.published).toList());
+  }
+
+  Stream<List<PyqItem>> watchForChapter(String chapterId) {
+    if (chapterId.isEmpty) return Stream.value(const []);
+    return watchAll().map(
+      (all) => all
+          .where((p) => p.published && p.chapterId == chapterId)
+          .toList(),
+    );
+  }
+
+  Stream<List<PyqItem>> watchForSubjectId(String subjectId) {
+    if (subjectId.isEmpty) return Stream.value(const []);
+    return watchAll().map(
+      (all) => all
+          .where((p) => p.published && p.subjectId == subjectId)
+          .toList(),
+    );
+  }
+
   Future<String> add(PyqItem item) async {
     final doc = await _ref.add(item.toMap());
     return doc.id;

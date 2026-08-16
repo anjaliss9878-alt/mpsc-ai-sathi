@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:mpsc_combine_ai/models/student_profile.dart';
 import 'package:mpsc_combine_ai/screens/auth/signup_screen.dart' show targetExamOptions;
+import 'package:mpsc_combine_ai/screens/bookmarks/bookmarks_screen.dart';
+import 'package:mpsc_combine_ai/screens/certificates/certificates_screen.dart';
+import 'package:mpsc_combine_ai/screens/my_performance_screen.dart';
+import 'package:mpsc_combine_ai/screens/study_planner_screen.dart';
 import 'package:mpsc_combine_ai/services/auth_service.dart';
 import 'package:mpsc_combine_ai/services/profile_repository.dart';
 import 'package:mpsc_combine_ai/theme/app_colors.dart';
@@ -76,14 +79,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
       _infoMessage = null;
     });
     try {
-      await profileRepository.saveProfile(
-        StudentProfile(
-          uid: _uid,
-          name: _nameController.text.trim(),
-          email: _email,
-          mobile: _mobileController.text.trim(),
-          targetExam: _targetExam ?? '',
-        ),
+      await profileRepository.updateSelfEditableFields(
+        uid: _uid,
+        name: _nameController.text.trim(),
+        mobile: _mobileController.text.trim(),
+        targetExam: _targetExam ?? '',
       );
       if (!mounted) return;
       setState(() => _infoMessage = 'प्रोफाइल यशस्वीरित्या जतन झाली.\n'
@@ -268,6 +268,69 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     label: 'प्रोफाइल जतन करा',
                     isLoading: _isSaving,
                     onPressed: _saveProfile,
+                  ),
+                  const SizedBox(height: 16),
+                  Card(
+                    child: Column(
+                      children: [
+                        ListTile(
+                          leading: const Icon(Icons.insights_rounded, color: AppColors.navy),
+                          title: const Text('प्रगती (Progress)'),
+                          trailing: const Icon(Icons.chevron_right_rounded),
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => const MyPerformanceScreen(),
+                            ),
+                          ),
+                        ),
+                        const Divider(height: 1),
+                        ListTile(
+                          leading: const Icon(Icons.bookmark_rounded, color: AppColors.navy),
+                          title: const Text('बुकमार्क्स'),
+                          trailing: const Icon(Icons.chevron_right_rounded),
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => const BookmarksScreen(),
+                            ),
+                          ),
+                        ),
+                        const Divider(height: 1),
+                        ListTile(
+                          leading: const Icon(Icons.workspace_premium_rounded, color: AppColors.navy),
+                          title: const Text('प्रमाणपत्रे (Certificates)'),
+                          trailing: const Icon(Icons.chevron_right_rounded),
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => const CertificatesScreen(),
+                            ),
+                          ),
+                        ),
+                        const Divider(height: 1),
+                        ListTile(
+                          leading: const Icon(Icons.download_rounded, color: AppColors.navy),
+                          title: const Text('डाउनलोड्स (Downloads)'),
+                          subtitle: const Text('Saved notes PDFs & bookmarks'),
+                          trailing: const Icon(Icons.chevron_right_rounded),
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => const BookmarksScreen(),
+                            ),
+                          ),
+                        ),
+                        const Divider(height: 1),
+                        ListTile(
+                          leading: const Icon(Icons.settings_rounded, color: AppColors.navy),
+                          title: const Text('सेटिंग्ज'),
+                          subtitle: const Text('Study goals & planner'),
+                          trailing: const Icon(Icons.chevron_right_rounded),
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => const StudyPlannerScreen(),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                   const SizedBox(height: 12),
                   SizedBox(

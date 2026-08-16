@@ -11,6 +11,7 @@ class LineListField extends StatefulWidget {
     required this.initialLines,
     required this.hintText,
     this.minLines = 3,
+    this.controller,
   });
 
   final String label;
@@ -18,23 +19,45 @@ class LineListField extends StatefulWidget {
   final String hintText;
   final int minLines;
 
+  /// When provided, the parent owns the controller (preferred for Save-ready
+  /// forms). Otherwise this widget creates and disposes its own.
+  final TextEditingController? controller;
+
   @override
   State<LineListField> createState() => LineListFieldState();
 }
 
 class LineListFieldState extends State<LineListField> {
-  late final TextEditingController controller =
-      TextEditingController(text: widget.initialLines.join('\n'));
+  late final TextEditingController controller;
+  late final bool _ownsController;
 
-  List<String> get lines => controller.text
+  List<String> get lines => linesFromController(controller);
+
+  static List<String> linesFromController(TextEditingController c) => c.text
       .split('\n')
       .map((l) => l.trim())
       .where((l) => l.isNotEmpty)
       .toList();
 
   @override
+  void initState() {
+    super.initState();
+    final external = widget.controller;
+    if (external != null) {
+      controller = external;
+      _ownsController = false;
+      if (controller.text.isEmpty && widget.initialLines.isNotEmpty) {
+        controller.text = widget.initialLines.join('\n');
+      }
+    } else {
+      controller = TextEditingController(text: widget.initialLines.join('\n'));
+      _ownsController = true;
+    }
+  }
+
+  @override
   void dispose() {
-    controller.dispose();
+    if (_ownsController) controller.dispose();
     super.dispose();
   }
 

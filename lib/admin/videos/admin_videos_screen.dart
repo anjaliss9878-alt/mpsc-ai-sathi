@@ -4,6 +4,8 @@ import 'package:mpsc_combine_ai/admin/widgets/admin_list_tile.dart';
 import 'package:mpsc_combine_ai/admin/widgets/admin_scaffold.dart';
 import 'package:mpsc_combine_ai/admin/widgets/confirm_delete_dialog.dart';
 import 'package:mpsc_combine_ai/models/video_item.dart';
+import 'package:mpsc_combine_ai/services/audit_log_repository.dart';
+import 'package:mpsc_combine_ai/services/storage_service.dart';
 import 'package:mpsc_combine_ai/services/video_repository.dart';
 import 'package:mpsc_combine_ai/widgets/async_state_widgets.dart';
 
@@ -41,7 +43,7 @@ class AdminVideosScreen extends StatelessWidget {
               final item = items[index];
               return AdminListTile(
                 title: item.title,
-                subtitle: item.subject,
+                subtitle: '${item.subject} · ${item.isFree ? 'Free' : 'Paid'} · ${item.sourceType}',
                 icon: Icons.play_circle_fill_rounded,
                 onEdit: () => Navigator.of(context).push(
                   MaterialPageRoute<void>(
@@ -53,6 +55,10 @@ class AdminVideosScreen extends StatelessWidget {
                   if (!confirmed) return;
                   try {
                     await videoRepository.delete(item.id);
+                    if (item.sourceType == 'upload') {
+                      await storageService.deleteByUrl(item.videoUrl);
+                    }
+                    await auditLogRepository.log(action: 'delete', module: 'Videos', targetLabel: item.title);
                     if (context.mounted) showAdminMessage(context, 'Video deleted.');
                   } catch (e) {
                     if (context.mounted) showAdminError(context, e);

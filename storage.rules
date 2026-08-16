@@ -1,0 +1,99 @@
+rules_version = '2';
+
+// MPSC COMBINE AI — Firebase Storage rules.
+//
+// Admins (UID present in Firestore `admin/{uid}` — singular, matching the
+// app's AdminRepository) may upload/delete any file under the content
+// folders used by the Admin Panel. Signed-in students may only read those
+// files (subject images, note attachments, teaching slides, video files,
+// etc). Everything else is denied.
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isPremiumStudent() {
+      return isSignedIn() && (
+        !firestore.exists(/databases/(default)/documents/students/$(request.auth.uid)) ||
+        firestore.get(/databases/(default)/documents/students/$(request.auth.uid)).data.get('isPremium', true) == true
+      );
+    }
+
+    function isAdmin() {
+      // Match Firestore rules: accept singular `admin` (current) or plural
+      // `admins` (legacy) so Storage uploads succeed for either allow-list.
+      return isSignedIn() && (
+        firestore.exists(/databases/(default)/documents/admin/$(request.auth.uid)) ||
+        firestore.exists(/databases/(default)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    match /subjects/{fileName} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /notes/{fileName} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /audio/{fileName} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn()
+        && request.resource.size < 20 * 1024 * 1024
+        && request.resource.contentType.matches('audio/.*');
+    }
+
+    match /videos/{fileName} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Premium AI Classroom MP4s. Signed-in students with isPremium != false.
+    match /videos/ai_lessons/{fileName} {
+      allow read: if isPremiumStudent();
+      allow write: if isSignedIn()
+        && request.resource.size < 120 * 1024 * 1024
+        && request.resource.contentType.matches('video/.*');
+    }
+
+    match /thumbnails/{fileName} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn()
+        && request.resource.size < 8 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    match /classroom_pdfs/{uid}/{fileName} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow write: if isSignedIn() && request.auth.uid == uid
+        && request.resource.size < 20 * 1024 * 1024;
+    }
+
+    // AI Video Lesson Engine — topic-keyed MP4 cache (any dynamic topic).
+    // Signed-in students may read/write rendered lessons so generation can
+    // cache without an admin round-trip. Object names are opaque hashes.
+    match /ai_videos/{fileName} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn()
+        && request.resource.size < 120 * 1024 * 1024
+        && request.resource.contentType.matches('video/.*');
+    }
+
+    match /teachingSlides/{fileName} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /faculty/{fileName} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

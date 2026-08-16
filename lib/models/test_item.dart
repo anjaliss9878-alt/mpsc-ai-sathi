@@ -1,3 +1,5 @@
+import 'package:mpsc_combine_ai/utils/json_list.dart';
+
 /// One question embedded inside a [TestItem].
 class TestQuestion {
   const TestQuestion({
@@ -15,7 +17,7 @@ class TestQuestion {
   factory TestQuestion.fromMap(Map<String, dynamic> map) {
     return TestQuestion(
       question: map['question'] as String? ?? '',
-      options: List<String>.from(map['options'] as List? ?? const []),
+      options: asStringList(map['options']),
       correctIndex: (map['correctIndex'] as num?)?.toInt() ?? 0,
       explanation: map['explanation'] as String? ?? '',
     );
@@ -56,7 +58,6 @@ class TestItem {
   final int order;
 
   factory TestItem.fromMap(Map<String, dynamic> map, String id) {
-    final rawQuestions = map['questions'] as List? ?? const [];
     return TestItem(
       id: id,
       title: map['title'] as String? ?? '',
@@ -64,9 +65,7 @@ class TestItem {
       durationSeconds: (map['durationSeconds'] as num?)?.toInt() ?? 600,
       correctMarks: (map['correctMarks'] as num?)?.toDouble() ?? 2.0,
       negativeMarks: (map['negativeMarks'] as num?)?.toDouble() ?? 0.5,
-      questions: rawQuestions
-          .map((q) => TestQuestion.fromMap(Map<String, dynamic>.from(q as Map)))
-          .toList(),
+      questions: asMapList(map['questions']).map(TestQuestion.fromMap).toList(),
       order: (map['order'] as num?)?.toInt() ?? 0,
     );
   }

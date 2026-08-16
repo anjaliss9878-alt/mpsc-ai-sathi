@@ -109,7 +109,7 @@ class _CbtTestScreenState extends State<CbtTestScreen> {
       questionResults: questionResults,
     );
 
-    TestResultRepository.instance.saveResult(result);
+    TestResultRepository.instance.saveResult(result, testId: widget.test.id);
 
     if (!mounted) return;
     Navigator.of(context).pushReplacement(

@@ -26,6 +26,7 @@ class FeatureScreenScaffold extends StatelessWidget {
     this.headerAction,
     this.isLoading = false,
     this.emptyMessage = 'Placeholder content — full features coming in a future update.',
+    this.sectionTitle = 'Available',
   });
 
   final String title;
@@ -38,10 +39,13 @@ class FeatureScreenScaffold extends StatelessWidget {
   /// still waiting for its first snapshot.
   final bool isLoading;
 
-  /// Shown under "Available Soon" above the item list — override for
+  /// Shown under [sectionTitle] above the item list — override for
   /// Firestore-backed screens to describe real content instead of the
   /// original static placeholder copy.
   final String emptyMessage;
+
+  /// Section heading above the list (was hard-coded "Available Soon").
+  final String sectionTitle;
 
   @override
   Widget build(BuildContext context) {
@@ -80,7 +84,7 @@ class FeatureScreenScaffold extends StatelessWidget {
                 ),
                 const SizedBox(height: 24),
                 Text(
-                  'Available Soon',
+                  sectionTitle,
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.w700,
                         color: AppColors.textPrimary,

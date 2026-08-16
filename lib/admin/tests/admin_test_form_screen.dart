@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:mpsc_combine_ai/admin/widgets/admin_scaffold.dart';
 import 'package:mpsc_combine_ai/admin/widgets/confirm_delete_dialog.dart';
 import 'package:mpsc_combine_ai/models/test_item.dart';
+import 'package:mpsc_combine_ai/services/audit_log_repository.dart';
 import 'package:mpsc_combine_ai/services/test_repository.dart';
 import 'package:mpsc_combine_ai/theme/app_colors.dart';
 
@@ -119,8 +120,10 @@ class _AdminTestFormScreenState extends State<AdminTestFormScreen> {
       );
       if (widget.existing == null) {
         await testRepository.add(test);
+        await auditLogRepository.log(action: 'create', module: 'Tests', targetLabel: test.title);
       } else {
         await testRepository.update(test);
+        await auditLogRepository.log(action: 'update', module: 'Tests', targetLabel: test.title);
       }
       if (mounted) Navigator.of(context).pop();
     } catch (e) {

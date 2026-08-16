@@ -4,6 +4,7 @@ import 'package:mpsc_combine_ai/admin/widgets/admin_list_tile.dart';
 import 'package:mpsc_combine_ai/admin/widgets/admin_scaffold.dart';
 import 'package:mpsc_combine_ai/admin/widgets/confirm_delete_dialog.dart';
 import 'package:mpsc_combine_ai/models/mcq_item.dart';
+import 'package:mpsc_combine_ai/services/audit_log_repository.dart';
 import 'package:mpsc_combine_ai/services/mcq_repository.dart';
 import 'package:mpsc_combine_ai/widgets/async_state_widgets.dart';
 
@@ -53,6 +54,7 @@ class AdminMcqsScreen extends StatelessWidget {
                   if (!confirmed) return;
                   try {
                     await mcqRepository.delete(item.id);
+                    await auditLogRepository.log(action: 'delete', module: 'MCQs', targetLabel: item.question);
                     if (context.mounted) showAdminMessage(context, 'MCQ deleted.');
                   } catch (e) {
                     if (context.mounted) showAdminError(context, e);

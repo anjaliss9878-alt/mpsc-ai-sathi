@@ -1,0 +1,11 @@
+{
+  "dart.flutterWebRenderer": "canvaskit",
+  "dart.openDevTools": "never",
+  "dart.cliConsole": "terminal",
+  "dart.env": {
+    "FLUTTER_WEB": "true"
+  },
+  "dart.flutterRunAdditionalArgs": [
+    "--web-hostname=localhost"
+  ]
+}

@@ -38,9 +38,10 @@ class ResponsiveScrollView extends StatelessWidget {
 }
 
 class NotesAppBar extends StatelessWidget implements PreferredSizeWidget {
-  const NotesAppBar({super.key, required this.title});
+  const NotesAppBar({super.key, required this.title, this.actions});
 
   final String title;
+  final List<Widget>? actions;
 
   @override
   Size get preferredSize => const Size.fromHeight(kToolbarHeight);
@@ -48,16 +49,26 @@ class NotesAppBar extends StatelessWidget implements PreferredSizeWidget {
   @override
   Widget build(BuildContext context) {
     return AppBar(
+      backgroundColor: AppColors.navy,
+      foregroundColor: Colors.white,
+      elevation: 0,
+      scrolledUnderElevation: 0,
       title: Text(
         title,
-        style: const TextStyle(fontWeight: FontWeight.w600),
+        style: const TextStyle(fontWeight: FontWeight.w700, color: Colors.white),
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
       ),
       leading: IconButton(
-        icon: const Icon(Icons.arrow_back_rounded),
-        onPressed: () => Navigator.of(context).pop(),
+        tooltip: 'Back',
+        icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
+        onPressed: () {
+          if (Navigator.of(context).canPop()) {
+            Navigator.of(context).pop();
+          }
+        },
       ),
+      actions: actions,
     );
   }
 }

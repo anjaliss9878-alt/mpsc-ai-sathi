@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:mpsc_combine_ai/utils/json_list.dart';
 
-/// A subject/topic area (e.g. Polity, Economy) stored in Firestore at
+/// A subject/topic area (e.g. राज्यशास्त्र) stored in Firestore at
 /// `subjects/{id}`. Chapters and notes reference it via `subjectId`.
 class SubjectItem {
   const SubjectItem({
@@ -9,33 +10,72 @@ class SubjectItem {
     required this.subtitle,
     required this.iconName,
     required this.order,
+    this.imageUrl = '',
+    this.slug = '',
+    this.nameEn = '',
+    this.published = true,
+    this.updatedAt,
   });
 
   final String id;
+
+  /// Primary display name (Marathi). Also written as `nameMr` in Firestore.
   final String title;
   final String subtitle;
   final String iconName;
   final int order;
 
+  /// Optional cover image (uploaded to Firebase Storage from the Admin
+  /// Panel). Falls back to [icon] in the student UI when empty.
+  final String imageUrl;
+
+  /// Stable English key for idempotent seeding (e.g. `rajyashastra`).
+  final String slug;
+
+  /// Optional English label for admin search / internal display.
+  final String nameEn;
+
+  /// When false, students do not see this subject. Missing field ⇒ published.
+  final bool published;
+
+  final DateTime? updatedAt;
+
+  /// Alias for Marathi title (data-model docs / seed helpers).
+  String get nameMr => title;
+
   IconData get icon => iconForName(iconName);
 
   factory SubjectItem.fromMap(Map<String, dynamic> map, String id) {
+    final rawTitle = map['title'] ?? map['nameMr'] ?? map['name'];
+    final title = rawTitle is String ? rawTitle.trim() : '';
+    final nameMr = (map['nameMr'] as String?)?.trim() ?? '';
     return SubjectItem(
       id: id,
-      title: map['title'] as String? ?? '',
+      title: title.isNotEmpty ? title : nameMr,
       subtitle: map['subtitle'] as String? ?? '',
       iconName: map['iconName'] as String? ?? 'menu_book',
-      order: (map['order'] as num?)?.toInt() ?? 0,
+      order: asInt(map['order']),
+      imageUrl: map['imageUrl'] as String? ?? '',
+      slug: map['slug'] as String? ?? '',
+      nameEn: map['nameEn'] as String? ?? '',
+      published: asBool(map['published'], defaultValue: true),
+      updatedAt: _parseUpdatedAt(map['updatedAt']),
     );
   }
 
   Map<String, dynamic> toMap() {
+    final now = DateTime.now().toIso8601String();
     return {
       'title': title,
+      'nameMr': title,
+      'nameEn': nameEn,
       'subtitle': subtitle,
       'iconName': iconName,
       'order': order,
-      'updatedAt': DateTime.now().toIso8601String(),
+      'imageUrl': imageUrl,
+      'slug': slug,
+      'published': published,
+      'updatedAt': now,
     };
   }
 
@@ -44,6 +84,11 @@ class SubjectItem {
     String? subtitle,
     String? iconName,
     int? order,
+    String? imageUrl,
+    String? slug,
+    String? nameEn,
+    bool? published,
+    DateTime? updatedAt,
   }) {
     return SubjectItem(
       id: id,
@@ -51,8 +96,20 @@ class SubjectItem {
       subtitle: subtitle ?? this.subtitle,
       iconName: iconName ?? this.iconName,
       order: order ?? this.order,
+      imageUrl: imageUrl ?? this.imageUrl,
+      slug: slug ?? this.slug,
+      nameEn: nameEn ?? this.nameEn,
+      published: published ?? this.published,
+      updatedAt: updatedAt ?? this.updatedAt,
     );
   }
+}
+
+DateTime? _parseUpdatedAt(dynamic value) {
+  if (value is String && value.isNotEmpty) {
+    return DateTime.tryParse(value);
+  }
+  return null;
 }
 
 /// Maps a stored icon name (Admin Panel picker) to a concrete [IconData].
@@ -75,6 +132,12 @@ IconData iconForName(String name) {
       return Icons.gavel_rounded;
     case 'psychology':
       return Icons.psychology_rounded;
+    case 'eco':
+      return Icons.eco_rounded;
+    case 'newspaper':
+      return Icons.newspaper_rounded;
+    case 'translate':
+      return Icons.translate_rounded;
     case 'menu_book':
     default:
       return Icons.menu_book_rounded;
@@ -92,4 +155,7 @@ const Map<String, IconData> subjectIconChoices = {
   'calculate': Icons.calculate_rounded,
   'gavel': Icons.gavel_rounded,
   'psychology': Icons.psychology_rounded,
+  'eco': Icons.eco_rounded,
+  'newspaper': Icons.newspaper_rounded,
+  'translate': Icons.translate_rounded,
 };

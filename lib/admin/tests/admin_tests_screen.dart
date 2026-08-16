@@ -4,6 +4,7 @@ import 'package:mpsc_combine_ai/admin/widgets/admin_list_tile.dart';
 import 'package:mpsc_combine_ai/admin/widgets/admin_scaffold.dart';
 import 'package:mpsc_combine_ai/admin/widgets/confirm_delete_dialog.dart';
 import 'package:mpsc_combine_ai/models/test_item.dart';
+import 'package:mpsc_combine_ai/services/audit_log_repository.dart';
 import 'package:mpsc_combine_ai/services/test_repository.dart';
 import 'package:mpsc_combine_ai/widgets/async_state_widgets.dart';
 
@@ -55,6 +56,7 @@ class AdminTestsScreen extends StatelessWidget {
                   if (!confirmed) return;
                   try {
                     await testRepository.delete(test.id);
+                    await auditLogRepository.log(action: 'delete', module: 'Tests', targetLabel: test.title);
                     if (context.mounted) showAdminMessage(context, 'Test deleted.');
                   } catch (e) {
                     if (context.mounted) showAdminError(context, e);

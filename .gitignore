@@ -1,0 +1,77 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# The .vscode folder contains launch configuration and tasks you configure in
+# VS Code which you may wish to be included in version control, so this line
+# is commented out by default.
+#.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+/coverage/
+
+# Local Gemini / compile-time secrets (never commit real keys)
+dart_defines.json
+tts_cache/
+secrets/
+
+# Local FFmpeg toolchain (download via tool script; do not commit binaries)
+.tools/ffmpeg/extract/
+.tools/ffmpeg/*.zip
+.tools/ffmpeg/ffmpeg.exe
+.tools/ffmpeg/ffprobe.exe
+
+# Local AI video work dirs
+/build/ai_video_work_root/
+/build/ai_rendered_videos/
+.env
+.env.*
+node_modules/
+
+# Local Firebase CLI / FFmpeg toolchains (never commit)
+.tools/
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Local CRUD smoke-test fixtures (not for production)
+/test_assets/
+
+# Android signing secrets
+**/android/key.properties
+**/*.jks
+**/*.keystore
+
+# Netlify
+.netlify/
+
+# Android Studio will place build artifacts here
+/android/app/debug
+/android/app/profile
+/android/app/release

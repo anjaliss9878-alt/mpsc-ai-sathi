@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:mpsc_combine_ai/admin/widgets/admin_scaffold.dart';
 import 'package:mpsc_combine_ai/admin/widgets/confirm_delete_dialog.dart';
 import 'package:mpsc_combine_ai/models/current_affair_item.dart';
+import 'package:mpsc_combine_ai/services/audit_log_repository.dart';
 import 'package:mpsc_combine_ai/services/current_affairs_repository.dart';
 
 class AdminCurrentAffairFormScreen extends StatefulWidget {
@@ -60,8 +61,10 @@ class _AdminCurrentAffairFormScreenState
       );
       if (widget.existing == null) {
         await currentAffairsRepository.add(item);
+        await auditLogRepository.log(action: 'create', module: 'Current Affairs', targetLabel: item.title);
       } else {
         await currentAffairsRepository.update(item);
+        await auditLogRepository.log(action: 'update', module: 'Current Affairs', targetLabel: item.title);
       }
       if (mounted) Navigator.of(context).pop();
     } catch (e) {

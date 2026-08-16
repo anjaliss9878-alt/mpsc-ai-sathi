@@ -43,14 +43,42 @@ dependencies:
 
   # AI Teacher chat: Markdown rendering (tables/bullets/bold) and native share sheet.
   flutter_markdown_plus: ^1.0.12
-  share_plus: ^13.2.1
+  share_plus: ^12.0.2
 
   # Opens Video/Live Class links (YouTube, Zoom, Google Meet, etc.).
   url_launcher: ^6.3.1
 
+  # Notes PDF: download from Firebase Storage, cache offline, open locally,
+  # and render in-page on the Topic (Notes detail) screen.
+  path_provider: ^2.1.5
+  open_filex: ^4.7.0
+  # Pin below 2.4.6: newer pdfrx pulls image ^4.8 which conflicts with excel ^4.0.6.
+  pdfrx: ^2.4.5
+
+  # AI Avatar module: on-device voice output (default) and playback of a
+  # talking-head video clip once a HeyGen/D-ID provider is configured.
+  flutter_tts: ^4.2.5
+  video_player: ^2.13.0
+
+  # Admin Panel: Firebase Storage uploads (subject images, video files,
+  # note/teaching-slide attachments) and file selection (images, PDF, DOCX,
+  # CSV/XLSX for bulk upload).
+  firebase_storage: ^13.0.4
+  file_picker: ^10.3.4
+
+  # Admin Panel bulk upload: parsing CSV and Excel (.xlsx) files.
+  csv: ^6.0.0
+  excel: ^4.0.6
+  just_audio: ^0.10.6
+  googleapis_auth: ^2.3.3
+  crypto: ^3.0.7
+  path: ^1.9.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
+
+  fake_cloud_firestore: ^4.0.0
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
@@ -70,10 +98,8 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
-  # To add assets to your application, add an assets section, like this:
-  # assets:
-  #   - images/a_dot_burr.jpeg
-  #   - images/a_dot_ham.jpeg
+  assets:
+    - assets/rendered_videos/
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

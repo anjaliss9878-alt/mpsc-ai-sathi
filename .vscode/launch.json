@@ -1,0 +1,49 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "MPSC Student App (Web · recommended · 4GB)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "deviceId": "web-server",
+      "args": [],
+      "toolArgs": [
+        "--dart-define-from-file=dart_defines.json",
+        "--web-hostname=localhost",
+        "--web-port=8080",
+        "--no-web-resources-cdn"
+      ]
+    },
+    {
+      "name": "MPSC Admin Panel (Web · recommended · 4GB)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/admin_main.dart",
+      "deviceId": "web-server",
+      "toolArgs": [
+        "--dart-define-from-file=dart_defines.json",
+        "--web-hostname=localhost",
+        "--web-port=8081",
+        "--no-web-resources-cdn"
+      ]
+    },
+    {
+      "name": "MPSC Student App (Chrome · DWDS often times out)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "deviceId": "chrome",
+      "toolArgs": [
+        "--dart-define-from-file=dart_defines.json",
+        "--web-hostname=127.0.0.1",
+        "--web-browser-flag=--user-data-dir=C:\\Users\\Admin\\AppData\\Local\\Temp\\flutter_chrome_debug_profile",
+        "--web-browser-flag=--disable-extensions",
+        "--web-browser-flag=--disable-popup-blocking",
+        "--web-browser-flag=--no-first-run",
+        "--web-browser-flag=--disable-dev-shm-usage",
+        "--web-browser-flag=--js-flags=--max-old-space-size=512"
+      ]
+    }
+  ]
+}

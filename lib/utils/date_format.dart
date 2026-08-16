@@ -50,3 +50,11 @@ String formatLongDate(DateTime date) {
   final weekday = _weekdays[date.weekday - 1];
   return '$weekday, ${date.day} ${_monthsFull[date.month - 1]} ${date.year}';
 }
+
+/// e.g. "20 Jul 2026, 7:05 PM".
+String formatFriendlyDateTime(DateTime date) {
+  final hour12 = date.hour % 12 == 0 ? 12 : date.hour % 12;
+  final ampm = date.hour >= 12 ? 'PM' : 'AM';
+  final minute = date.minute.toString().padLeft(2, '0');
+  return '${formatShortDate(date)}, $hour12:$minute $ampm';
+}

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "206033195402",
+    "project_id": "mpsc-3f4ef",
+    "storage_bucket": "mpsc-3f4ef.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:206033195402:android:9c759cea0916c07aa13873",
+        "android_client_info": {
+          "package_name": "com.example.mpsc_combine_ai"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCBP2C9cxhIJeRwFq5QRD73fe4F6gh2tuo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

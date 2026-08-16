@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 import 'package:mpsc_combine_ai/models/chat_message.dart';
+import 'package:mpsc_combine_ai/services/ai_backend_base.dart';
+import 'package:mpsc_combine_ai/utils/json_list.dart';
 
 /// Thrown whenever the AI Teacher service cannot produce a reply — missing
 /// configuration, a network failure, a non-200 response, or an unexpected
@@ -65,17 +67,22 @@ abstract class AiTeacherService {
 ///
 /// Optionally override the model with `--dart-define=AI_MODEL=gemini-2.0-flash`.
 class GeminiAiTeacherService implements AiTeacherService {
-  GeminiAiTeacherService({http.Client? client}) : _client = client ?? http.Client();
+  GeminiAiTeacherService({http.Client? client, String? apiKey})
+      : _client = client ?? http.Client(),
+        _apiKey = (apiKey ?? _envKey).trim();
 
   final http.Client _client;
+  final String _apiKey;
 
-  static const String _apiKey = String.fromEnvironment('AI_API_KEY');
+  static const String _envKey = String.fromEnvironment('AI_API_KEY');
   static const String _model = String.fromEnvironment(
     'AI_MODEL',
-    defaultValue: 'gemini-2.0-flash',
+    defaultValue: 'gemini-flash-latest',
   );
   static const String _baseUrl =
       'https://generativelanguage.googleapis.com/v1beta/models';
+
+  String get _workerBase => aiBackendBase();
 
   @override
   Future<String> sendMessage({
@@ -84,10 +91,10 @@ class GeminiAiTeacherService implements AiTeacherService {
     String? extraContext,
   }) async {
     if (_apiKey.isEmpty) {
-      throw const AiServiceException(
-        'AI सेवा अद्याप कॉन्फिगर केलेली नाही. कृपया AI_API_KEY सेट करा.\n'
-        '(AI service is not configured yet. Please set the AI_API_KEY '
-        'environment variable and restart the app.)',
+      return _sendViaBackend(
+        history: history,
+        userMessage: userMessage,
+        extraContext: extraContext,
       );
     }
 
@@ -143,23 +150,20 @@ class GeminiAiTeacherService implements AiTeacherService {
     }
 
     if (response.statusCode != 200) {
-      throw AiServiceException(
-        'AI सेवेकडून उत्तर मिळाले नाही (कोड ${response.statusCode}). कृपया पुन्हा प्रयत्न करा.\n'
-        '(AI service returned an error, code ${response.statusCode}. Please retry.)',
+      throw const AiServiceException(
+        'उत्तर मिळाले नाही. कृपया पुन्हा प्रयत्न करा.',
       );
     }
 
     try {
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
-      final candidates = decoded['candidates'] as List<dynamic>?;
-      final firstCandidate = candidates?.isNotEmpty == true
-          ? candidates!.first as Map<String, dynamic>
-          : null;
-      final content = firstCandidate?['content'] as Map<String, dynamic>?;
-      final parts = content?['parts'] as List<dynamic>?;
-      final text = parts?.isNotEmpty == true
-          ? (parts!.first as Map<String, dynamic>)['text'] as String?
-          : null;
+      final candidates = asMapList(decoded['candidates']);
+      final firstCandidate = candidates.isNotEmpty ? candidates.first : null;
+      final content = firstCandidate?['content'];
+      final contentMap =
+          content is Map ? Map<String, dynamic>.from(content) : null;
+      final parts = asMapList(contentMap?['parts']);
+      final text = parts.isNotEmpty ? parts.first['text'] as String? : null;
 
       if (text == null || text.trim().isEmpty) {
         throw const AiServiceException(
@@ -177,8 +181,135 @@ class GeminiAiTeacherService implements AiTeacherService {
       );
     }
   }
+
+  Future<String> _sendViaBackend({
+    required List<ChatMessage> history,
+    required String userMessage,
+    String? extraContext,
+  }) async {
+    final uri = Uri.parse('$_workerBase/ai/doubt');
+    http.Response response;
+    try {
+      response = await _client
+          .post(
+            uri,
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'message': userMessage,
+              'extraContext': extraContext ?? '',
+              'history': history
+                  .map(
+                    (m) => {
+                      'role': m.isUser ? 'user' : 'model',
+                      'content': m.content,
+                    },
+                  )
+                  .toList(),
+            }),
+          )
+          .timeout(const Duration(seconds: 60));
+    } catch (_) {
+      throw const AiServiceException(
+        'उत्तर मिळाले नाही. कृपया पुन्हा प्रयत्न करा.',
+      );
+    }
+    if (response.statusCode != 200) {
+      throw const AiServiceException(
+        'उत्तर मिळाले नाही. कृपया पुन्हा प्रयत्न करा.',
+      );
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map) {
+      throw const AiServiceException(
+        'उत्तर मिळाले नाही. कृपया पुन्हा प्रयत्न करा.',
+      );
+    }
+    final text = '${decoded['reply'] ?? ''}'.trim();
+    if (text.isEmpty) {
+      throw const AiServiceException(
+        'उत्तर मिळाले नाही. कृपया पुन्हा प्रयत्न करा.',
+      );
+    }
+    return text;
+  }
 }
 
-/// Shared instance used by the AI Teacher screen. Swap this single line for
-/// a different [AiTeacherService] implementation if the provider changes.
+/// [AiTeacherService] implementation that returns canned, clearly-labelled
+/// placeholder replies instead of calling any real backend.
+///
+/// Lets the entire AI Teacher flow — loading state, error state, and chat
+/// history persistence in [chatRepository] — be built, run, and tested end
+/// to end with zero external dependency and zero API key, since
+/// [AiTeacherScreen] only ever talks to the [AiTeacherService] interface
+/// and has no idea which implementation is actually behind it.
+class MockAiTeacherService implements AiTeacherService {
+  /// Trigger phrases (checked case-insensitively) that make the mock throw
+  /// an [AiServiceException] on purpose, so the chat's error state (retry
+  /// button, error bubble, etc.) can be exercised without a real failure.
+  static const List<String> _errorTriggers = [
+    'simulate error',
+    'trigger error',
+    'test error',
+  ];
+
+  @override
+  Future<String> sendMessage({
+    required List<ChatMessage> history,
+    required String userMessage,
+    String? extraContext,
+  }) async {
+    // Simulated network latency so the UI's loading indicator is genuinely
+    // exercised rather than resolving instantly.
+    await Future.delayed(const Duration(milliseconds: 900));
+
+    final normalized = userMessage.trim().toLowerCase();
+    if (_errorTriggers.any(normalized.contains)) {
+      throw const AiServiceException(
+        'ही एक चाचणी त्रुटी आहे (मॉक सेवा). कृपया पुन्हा प्रयत्न करा.\n'
+        '(This is a simulated test error from the mock AI service. Please retry.)',
+      );
+    }
+
+    final isMarathi = RegExp(r'[\u0900-\u097F]').hasMatch(userMessage);
+    return _buildReply(userMessage.trim(), marathi: isMarathi, turnNumber: history.length + 1);
+  }
+
+  String _buildReply(String question, {required bool marathi, required int turnNumber}) {
+    if (marathi) {
+      return '''
+🧪 **(मॉक उत्तर — खरी Gemini API अद्याप जोडलेली नाही)**
+
+तुम्ही विचारले: _"$question"_
+
+- हे एक तात्पुरते उदाहरण उत्तर आहे, जे कोणत्याही खऱ्या AI मॉडेलशिवाय तयार केले आहे.
+- खरे, अचूक आणि परीक्षा-केंद्रित उत्तर मिळवण्यासाठी `AI_API_KEY` कॉन्फिगर करा — कोड किंवा UI मध्ये कोणताही बदल न करता.
+- तोपर्यंत लोडिंग, चॅट इतिहास आणि त्रुटी हाताळणी पूर्णपणे कार्यरत आहे हे तपासण्यासाठी हे उत्तर वापरा.
+
+_(संदेश क्रमांक: $turnNumber)_
+''';
+    }
+    return '''
+🧪 **(Mock reply — real Gemini API not connected yet)**
+
+You asked: _"$question"_
+
+- This is a placeholder answer generated without calling any real AI model.
+- Configure `AI_API_KEY` to switch to real, exam-focused Gemini answers — no code or UI change required.
+- Until then, use this reply to verify the chat flow end to end: loading state, history, and error handling.
+
+_(Turn number: $turnNumber)_
+''';
+  }
+}
+
+// --- Single configuration point ------------------------------------------
+//
+// Set `AI_API_KEY` via `--dart-define=AI_API_KEY=your_gemini_api_key` (see
+// [GeminiAiTeacherService]'s doc comment for the full command) to switch
+// the whole app over to the real Gemini backend.
+//
+// Leave it unset — the default — to keep using [MockAiTeacherService].
+// Nothing else needs to change either way: [AiTeacherScreen] only ever
+// depends on the [AiTeacherService] interface below, never on a concrete
+// implementation.
 final AiTeacherService aiTeacherService = GeminiAiTeacherService();

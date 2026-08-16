@@ -20,6 +20,21 @@ class LiveClassRepository {
         );
   }
 
+  /// Live updates for a single class — used by the Join/Countdown screen so
+  /// a status change made from the Admin Panel (e.g. upcoming → live) is
+  /// reflected instantly without the student needing to reopen the screen.
+  Stream<LiveClassItem?> watchById(String id) {
+    return _ref.doc(id).snapshots().map(
+          (doc) => doc.exists ? LiveClassItem.fromMap(doc.data()!, doc.id) : null,
+        );
+  }
+
+  Future<LiveClassItem?> getById(String id) async {
+    final doc = await _ref.doc(id).get();
+    if (!doc.exists) return null;
+    return LiveClassItem.fromMap(doc.data()!, doc.id);
+  }
+
   Future<String> add(LiveClassItem item) async {
     final doc = await _ref.add(item.toMap());
     return doc.id;
@@ -34,6 +49,6 @@ class LiveClassRepository {
   }
 }
 
-/// Shared instance used by both the student Live Classes screen and the
+/// Shared instance used by both the student Live Classes screens and the
 /// Admin Panel.
 final LiveClassRepository liveClassRepository = LiveClassRepository();
