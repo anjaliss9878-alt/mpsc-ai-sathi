@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:mpsc_combine_ai/screens/mock_tests_screen.dart';
 import 'package:mpsc_combine_ai/screens/revision/revision_hub_screen.dart';
 import 'package:mpsc_combine_ai/screens/subject_notes_screen.dart';
+import 'package:mpsc_combine_ai/screens/weakness/ai_weakness_tracker_screen.dart';
 import 'package:mpsc_combine_ai/services/auth_service.dart';
 import 'package:mpsc_combine_ai/services/student_progress_repository.dart';
 import 'package:mpsc_combine_ai/theme/app_colors.dart';
@@ -69,6 +70,28 @@ class MyPerformanceScreen extends StatelessWidget {
                   return ListView(
                     padding: const EdgeInsets.all(16),
                     children: [
+                      Card(
+                        child: ListTile(
+                          leading: const Icon(
+                            Icons.warning_amber_rounded,
+                            color: AppColors.orange,
+                          ),
+                          title: const Text(
+                            'कमकुवत विषय ट्रॅकर',
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          subtitle: const Text(
+                            'चाचणी/क्विझ वरून खरे कमकुवत विषय',
+                          ),
+                          trailing: const Icon(Icons.chevron_right_rounded),
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => const AiWeaknessTrackerScreen(),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
                       Row(
                         children: [
                           Expanded(

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:mpsc_combine_ai/admin/widgets/admin_scaffold.dart';
 import 'package:mpsc_combine_ai/admin/widgets/confirm_delete_dialog.dart';
 import 'package:mpsc_combine_ai/data/subject_notes_data.dart';
+import 'package:mpsc_combine_ai/models/exam_item.dart';
 import 'package:mpsc_combine_ai/models/subject_item.dart';
 import 'package:mpsc_combine_ai/services/audit_log_repository.dart';
 import 'package:mpsc_combine_ai/services/notes_repository.dart';
@@ -27,7 +28,25 @@ class _AdminSubjectFormScreenState extends State<AdminSubjectFormScreen> {
   late final TextEditingController _orderController =
       TextEditingController(text: (widget.existing?.order ?? 0).toString());
   late bool _published = widget.existing?.published ?? true;
+  late String _examId = widget.existing?.examId.isNotEmpty == true
+      ? widget.existing!.examId
+      : kDefaultExamId;
+  List<ExamItem> _exams = const [];
   bool _isSaving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadExams();
+  }
+
+  Future<void> _loadExams() async {
+    final exams = await notesRepository.ensureDefaultExam().then((_) {
+      return notesRepository.getExamsOnce();
+    });
+    if (!mounted) return;
+    setState(() => _exams = exams);
+  }
 
   @override
   void dispose() {
@@ -71,6 +90,7 @@ class _AdminSubjectFormScreenState extends State<AdminSubjectFormScreen> {
         imageUrl: existing?.imageUrl ?? '',
         slug: slug,
         nameEn: nameEn,
+        examId: _examId,
         published: _published,
       );
 
@@ -93,7 +113,7 @@ class _AdminSubjectFormScreenState extends State<AdminSubjectFormScreen> {
         showAdminMessage(
           context,
           _published
-              ? 'Subject saved — open it to add Topics.'
+              ? 'Subject saved — open it to add Chapters.'
               : 'Subject saved as Draft — hidden from students until Published.',
         );
         Navigator.of(context).pop();
@@ -112,6 +132,20 @@ class _AdminSubjectFormScreenState extends State<AdminSubjectFormScreen> {
       isSaving: _isSaving,
       onSave: _save,
       children: [
+        DropdownButtonFormField<String>(
+          value: _exams.any((e) => e.id == _examId) ? _examId : kDefaultExamId,
+          decoration: const InputDecoration(labelText: 'Exam'),
+          items: [
+            for (final exam in _exams.isEmpty
+                ? [ExamItem.mpscCombine()]
+                : _exams)
+              DropdownMenuItem(value: exam.id, child: Text(exam.title)),
+          ],
+          onChanged: (v) {
+            if (v != null) setState(() => _examId = v);
+          },
+        ),
+        const SizedBox(height: 12),
         TextField(
           controller: _titleController,
           textInputAction: TextInputAction.next,

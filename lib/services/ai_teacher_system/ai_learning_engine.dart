@@ -1,9 +1,6 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:crypto/crypto.dart';
-import 'package:flutter/foundation.dart';
 import 'package:mpsc_combine_ai/models/ai_lesson.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/ai_chapter_debug.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/ai_lesson_repository.dart';
@@ -13,9 +10,9 @@ import 'package:mpsc_combine_ai/services/ai_teacher_system/lesson_cache_service.
 import 'package:mpsc_combine_ai/services/ai_teacher_system/lesson_generation_service.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/media_bytes_cache.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/subject_teacher.dart';
-import 'package:mpsc_combine_ai/services/ai_teacher_system/teaching_sequence.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/video_generation_pipeline.dart';
 import 'package:mpsc_combine_ai/services/auth_service.dart';
+import 'package:mpsc_combine_ai/services/elevenlabs_tts_service.dart';
 
 /// Production AI learning pack: video lecture + notes + MCQs + PYQs + revision.
 class AiLearningPack {
@@ -187,32 +184,55 @@ class AiLearningEngine {
   }) async {
     final style = subject ??
         detectMpscTeachingSubject(topic, hint: lesson.subjectName);
-    final script = _narration.buildLectureScript(
-      beats: teachingSequenceFor(lesson),
-      scriptLines: lesson.script,
+    final cues = _narration.lessonSpeakCues(lesson);
+    final scriptLines = [for (final cue in cues) cue.text];
+    final slideIndices = [for (final cue in cues) cue.slideIndex];
+    final script = _narration.buildLectureScript(scriptLines: scriptLines);
+    if (script.trim().isEmpty) {
+      throw const ElevenLabsTtsException(
+        'Empty lesson script',
+        statusCode: 400,
+      );
+    }
+    final audioKey = ElevenLabsTtsService.cacheKey(
+      text: script,
+      voiceId: elevenLabsTtsService.resolvedVoiceId(style),
+      modelId: elevenLabsTtsService.resolvedModelId,
     );
-    final audioKey =
-        'tts_${sha256.convert(utf8.encode(script)).toString().substring(0, 24)}';
+    final cachedClip = ElevenLabsTtsService.cachedAudio(audioKey);
+    if (cachedClip != null && cachedClip.bytes.isNotEmpty) {
+      return LessonAudioBundle(
+        bytes: cachedClip.bytes,
+        mimeType: cachedClip.mimeType,
+        duration: cachedClip.duration,
+        script: script,
+        spans: beatSpansFor(
+          texts: scriptLines.isNotEmpty ? scriptLines : [script],
+          total: cachedClip.duration,
+          slideIndices: slideIndices,
+        ),
+      );
+    }
     final cachedBytes = mediaBytesCache.read(audioKey);
     if (cachedBytes != null && cachedBytes.isNotEmpty) {
-      final duration = Duration(
-        milliseconds: (script.length * 72).clamp(8000, 240000),
-      );
+      final duration = cachedClip?.duration ??
+          Duration(milliseconds: (script.length * 72).clamp(8000, 240000));
       return LessonAudioBundle(
         bytes: cachedBytes,
         mimeType: 'audio/mpeg',
         duration: duration,
         script: script,
         spans: beatSpansFor(
-          texts: lesson.script.isNotEmpty ? lesson.script : [script],
+          texts: scriptLines.isNotEmpty ? scriptLines : [script],
           total: duration,
+          slideIndices: slideIndices,
         ),
       );
     }
 
     final audio = await _narration.synthesize(
-      beats: teachingSequenceFor(lesson),
-      scriptLines: lesson.script,
+      scriptLines: scriptLines,
+      slideIndices: slideIndices,
       subject: style,
       topic: topic,
     );
@@ -242,11 +262,7 @@ class AiLearningEngine {
           hint: subjectContext ?? lesson.subjectName,
         );
     LessonAudioBundle? audio;
-    try {
-      audio = await narrate(lesson: lesson, topic: topic, subject: subject);
-    } catch (e) {
-      debugPrint('[AiLearningEngine] narration skipped: $e');
-    }
+    audio = await narrate(lesson: lesson, topic: topic, subject: subject);
     return AiLearningPack(
       lesson: lesson,
       subject: subject,
@@ -283,24 +299,26 @@ class AiLearningEngine {
         subjectId: lesson.subjectId,
         subjectTitle: lesson.subjectName,
       );
-      await _lessons.markReady(
+      await _lessons.updateProgress(
         id: id,
-        lesson: lesson,
-        audioUrl: '',
-        videoUrl: '',
-        thumbnailUrl: '',
-        duration: 0,
-        playbackMode: AiLessonPlayback.educational,
+        status: AiLessonStatus.generating,
+        stage: AiLessonStage.creatingScenes,
+        progress: 35,
+        friendlyMessage: 'Generating slides...',
+        logMessage: 'Slides saved; waiting for audio and final video',
       );
       await _lessons.doc(id).set({
         'subject': lesson.subjectName,
         'userId': uid,
+        'status': AiLessonStatus.generating.wire,
+        'lesson': lesson.toMap(),
         'notes': lesson.notes,
         'memoryTricks': lesson.premium.memoryTricks,
         'revision': lesson.premium.quickRevision,
         'mcqs': lesson.mcqs.map((m) => m.toMap()).toList(),
         'pyqs': lesson.pyqs.map((p) => p.toMap()).toList(),
         'slides': lesson.slides.map((s) => s.toMap()).toList(),
+        'script': lesson.script,
       }, SetOptions(merge: true));
       aiChapterLog('firestore_save', {'success': true, 'id': id});
     } catch (e) {

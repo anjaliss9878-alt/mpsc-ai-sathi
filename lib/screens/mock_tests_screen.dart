@@ -11,7 +11,7 @@ class MockTestsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<List<TestItem>>(
-      stream: testRepository.watchAll(),
+      stream: testRepository.watchPublished(),
       builder: (context, snapshot) {
         final items = snapshot.data ?? const <TestItem>[];
         return FeatureScreenScaffold(

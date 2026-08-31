@@ -1,11 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:mpsc_combine_ai/admin/widgets/admin_scaffold.dart';
 import 'package:mpsc_combine_ai/admin/widgets/confirm_delete_dialog.dart';
+import 'package:mpsc_combine_ai/admin/widgets/content_index_picker.dart';
+import 'package:mpsc_combine_ai/admin/widgets/content_preview.dart';
 import 'package:mpsc_combine_ai/admin/widgets/line_list_field.dart';
 import 'package:mpsc_combine_ai/models/ai_teacher_content_item.dart';
+import 'package:mpsc_combine_ai/models/content_index.dart';
+import 'package:mpsc_combine_ai/models/exam_item.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_content_repository.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/generated_lesson.dart';
 import 'package:mpsc_combine_ai/services/audit_log_repository.dart';
+import 'package:mpsc_combine_ai/services/content_knowledge_indexer.dart';
 
 /// Holds editable state for one [GeneratedSlide] inside the form.
 class _SlideForm {
@@ -100,6 +105,18 @@ class _AdminAiTeacherContentFormScreenState
   late final List<_QuizForm> _quiz = (widget.existing?.quiz ?? const [])
       .map((q) => _QuizForm(from: q))
       .toList();
+  late NoteWorkflowStatus _status =
+      widget.existing?.status ?? NoteWorkflowStatus.draft;
+  late ContentIndexSelection _index = ContentIndexSelection(
+    examId: widget.existing?.examId.isNotEmpty == true
+        ? widget.existing!.examId
+        : kDefaultExamId,
+    targetGroup: targetGroupFromString(widget.existing?.targetGroup),
+    subjectId: widget.existing?.subjectId ?? '',
+    chapterId: widget.existing?.chapterId ?? '',
+    topicId: widget.existing?.topicId ?? '',
+    subjectTitle: widget.existing?.subjectName ?? '',
+  );
   bool _isSaving = false;
 
   @override
@@ -136,7 +153,9 @@ class _AdminAiTeacherContentFormScreenState
       final item = AiTeacherContentItem(
         id: widget.existing?.id ?? '',
         lessonTitle: _titleController.text.trim(),
-        subjectName: _subjectController.text.trim(),
+        subjectName: _index.subjectTitle.isNotEmpty
+            ? _index.subjectTitle
+            : _subjectController.text.trim(),
         summary: _summaryController.text.trim(),
         keywords: _keywordsController.text
             .split(',')
@@ -149,9 +168,18 @@ class _AdminAiTeacherContentFormScreenState
         quiz: _quiz.map((q) => q.toMcq()).toList(),
         notes: _notesKey.currentState?.lines ?? const [],
         order: widget.existing?.order ?? DateTime.now().millisecondsSinceEpoch,
+        examId: _index.examId,
+        targetGroup: targetGroupToString(_index.targetGroup),
+        subjectId: _index.subjectId,
+        chapterId: _index.chapterId,
+        topicId: _index.topicId,
+        published: contentWorkflowPublishedFlag(_status),
+        status: _status,
+        createdAt: widget.existing?.createdAt,
       );
+      String id = item.id;
       if (widget.existing == null) {
-        await aiTeacherContentRepository.add(item);
+        id = await aiTeacherContentRepository.add(item);
         await auditLogRepository.log(
           action: 'create',
           module: 'AI Teacher Content',
@@ -165,6 +193,30 @@ class _AdminAiTeacherContentFormScreenState
           targetLabel: item.lessonTitle,
         );
       }
+      try {
+        await contentKnowledgeIndexer.syncAiLesson(
+          AiTeacherContentItem(
+            id: id,
+            lessonTitle: item.lessonTitle,
+            subjectName: item.subjectName,
+            summary: item.summary,
+            keywords: item.keywords,
+            aiPrompt: item.aiPrompt,
+            teachingScript: item.teachingScript,
+            slides: item.slides,
+            quiz: item.quiz,
+            notes: item.notes,
+            order: item.order,
+            examId: item.examId,
+            targetGroup: item.targetGroup,
+            subjectId: item.subjectId,
+            chapterId: item.chapterId,
+            topicId: item.topicId,
+            published: item.published,
+            status: item.status,
+          ),
+        );
+      } catch (_) {}
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
       if (mounted) showAdminError(context, e);
@@ -179,7 +231,21 @@ class _AdminAiTeacherContentFormScreenState
       title: widget.existing == null ? 'Add AI Teacher Lesson' : 'Edit AI Teacher Lesson',
       isSaving: _isSaving,
       onSave: _save,
+      saveLabel: _status == NoteWorkflowStatus.published
+          ? 'Save & Publish'
+          : 'Save Draft',
       children: [
+        const AdminSectionLabel(label: 'Content index'),
+        ContentIndexPicker(
+          initial: _index,
+          onChanged: (v) => _index = v,
+        ),
+        const SizedBox(height: 14),
+        WorkflowStatusDropdown(
+          value: _status,
+          onChanged: (v) => setState(() => _status = v),
+        ),
+        const SizedBox(height: 14),
         TextField(
           controller: _titleController,
           decoration: const InputDecoration(labelText: 'Lesson title'),
@@ -251,6 +317,38 @@ class _AdminAiTeacherContentFormScreenState
           initialLines: widget.existing?.notes ?? const [],
           hintText: 'Key points shown in "View Notes".',
           minLines: 4,
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          onPressed: () => showAiLessonPreview(
+            context,
+            AiTeacherContentItem(
+              id: widget.existing?.id ?? '',
+              lessonTitle: _titleController.text.trim(),
+              subjectName: _subjectController.text.trim(),
+              summary: _summaryController.text.trim(),
+              keywords: _keywordsController.text
+                  .split(',')
+                  .map((k) => k.trim())
+                  .where((k) => k.isNotEmpty)
+                  .toList(),
+              aiPrompt: _aiPromptController.text.trim(),
+              teachingScript: _scriptKey.currentState?.lines ?? const [],
+              slides: _slides.map((s) => s.toSlide()).toList(),
+              quiz: _quiz.map((q) => q.toMcq()).toList(),
+              notes: _notesKey.currentState?.lines ?? const [],
+              order: widget.existing?.order ?? 0,
+              examId: _index.examId,
+              targetGroup: targetGroupToString(_index.targetGroup),
+              subjectId: _index.subjectId,
+              chapterId: _index.chapterId,
+              topicId: _index.topicId,
+              status: _status,
+              published: contentWorkflowPublishedFlag(_status),
+            ),
+          ),
+          icon: const Icon(Icons.visibility_outlined),
+          label: const Text('Preview'),
         ),
       ],
     );

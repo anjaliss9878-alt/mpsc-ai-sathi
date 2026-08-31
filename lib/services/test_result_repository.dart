@@ -14,12 +14,25 @@ class TestResultRepository {
   /// Most recent results first (session cache).
   List<TestResult> getResults() => List.unmodifiable(_results.reversed);
 
-  Future<void> saveResult(TestResult result, {String? testId}) async {
+  Future<void> saveResult(
+    TestResult result, {
+    String? testId,
+    String kind = 'test',
+    String subjectId = '',
+    String chapterId = '',
+  }) async {
     _results.add(result);
     final uid = authService.currentUser?.uid;
     if (uid == null) return;
     try {
-      await studentProgressRepository.saveTestAttempt(uid, result, testId: testId);
+      await studentProgressRepository.saveTestAttempt(
+        uid,
+        result,
+        testId: testId,
+        kind: kind,
+        subjectId: subjectId,
+        chapterId: chapterId,
+      );
       await studentProgressRepository.markGoalTask(
         uid: uid,
         task: 'test',

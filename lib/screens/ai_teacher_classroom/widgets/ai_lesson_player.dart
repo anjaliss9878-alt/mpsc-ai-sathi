@@ -46,6 +46,7 @@ class AiLessonPlayer extends StatefulWidget {
     this.showMemoryTrick = false,
     this.conceptTransition = false,
     this.showAvatar = false,
+    this.controlsEnabled = true,
   });
 
   final List<GeneratedSlide> slides;
@@ -93,6 +94,9 @@ class AiLessonPlayer extends StatefulWidget {
   /// Talking avatar overlay. Off by default for premium educational videos.
   final bool showAvatar;
 
+  /// When false, transport buttons are disabled (preview / no owner).
+  final bool controlsEnabled;
+
   /// When provided, fullscreen route rebuilds from the underlay player
   /// configuration each time this listenable notifies.
   final ValueNotifier<int>? listenable;
@@ -100,7 +104,7 @@ class AiLessonPlayer extends StatefulWidget {
   /// When true, shows exit-fullscreen instead of enter-fullscreen.
   final bool embedded;
 
-  static const speeds = <double>[0.75, 0.95, 1.0, 1.25, 1.5];
+  static const speeds = <double>[0.75, 0.9, 1.0, 1.25, 1.5];
 
   @override
   State<AiLessonPlayer> createState() => _AiLessonPlayerState();
@@ -180,13 +184,14 @@ class _AiLessonPlayerState extends State<AiLessonPlayer> {
       memoryTrickText: widget.memoryTrickText,
       showMemoryTrick: widget.showMemoryTrick,
       conceptTransition: widget.conceptTransition,
+      showAvatar: widget.showAvatar,
       embedded: true,
+      controlsEnabled: widget.controlsEnabled,
     );
   }
 
   String _speedLabel(double s) {
-    if ((s - 0.95).abs() < 0.01) return '0.95x';
-    if ((s - 0.9).abs() < 0.01) return '0.9x';
+    if ((s - 0.9).abs() < 0.02) return '0.9x';
     if (s == 1.0) return '1x';
     if (s == 0.75) return '0.75x';
     if (s == 1.25) return '1.25x';
@@ -195,8 +200,9 @@ class _AiLessonPlayerState extends State<AiLessonPlayer> {
   }
 
   void _cycleSpeed() {
+    if (!widget.controlsEnabled) return;
     final speeds = AiLessonPlayer.speeds;
-    final i = speeds.indexOf(widget.speed);
+    final i = speeds.indexWhere((s) => (s - widget.speed).abs() < 0.02);
     final next = speeds[(i < 0 ? 0 : i + 1) % speeds.length];
     widget.onSpeedChanged(next);
   }
@@ -333,11 +339,10 @@ class _AiLessonPlayerState extends State<AiLessonPlayer> {
                     color: Colors.transparent,
                     child: _YouTubeControls(
                       isPlaying: widget.isPlaying,
-                      progress: (widget.isPlaying || widget.subtitleHighlight > 0)
-                          ? widget.subtitleHighlight
-                          : widget.progress,
+                      progress: widget.progress,
                       muted: widget.muted,
                       speedLabel: _speedLabel(widget.speed),
+                      controlsEnabled: widget.controlsEnabled,
                       onPlayPause: widget.onPlayPause,
                       onReplay: widget.onReplay,
                       onStop: widget.onStop,
@@ -347,7 +352,7 @@ class _AiLessonPlayerState extends State<AiLessonPlayer> {
                       onSkipForward: widget.onSkipForward,
                       onSpeedTap: _cycleSpeed,
                       onMuteToggle: () => widget.onMuteChanged(!widget.muted),
-                      onSeek: widget.onSeek,
+                      onSeek: widget.controlsEnabled ? widget.onSeek : null,
                       onFullscreen: widget.embedded
                           ? () => Navigator.of(context).maybePop()
                           : _openFullscreen,
@@ -784,6 +789,7 @@ class _FullscreenLivePlayer extends StatelessWidget {
       conceptTransition: cfg.conceptTransition,
       showAvatar: cfg.showAvatar,
       embedded: true,
+      controlsEnabled: cfg.controlsEnabled,
     );
   }
 }
@@ -927,6 +933,7 @@ class _YouTubeControls extends StatelessWidget {
     required this.onMuteToggle,
     required this.onFullscreen,
     required this.exitFullscreen,
+    this.controlsEnabled = true,
     this.onSeek,
     this.onNext,
     this.onPrevious,
@@ -938,6 +945,7 @@ class _YouTubeControls extends StatelessWidget {
   final double progress;
   final bool muted;
   final String speedLabel;
+  final bool controlsEnabled;
   final VoidCallback onPlayPause;
   final VoidCallback onReplay;
   final VoidCallback onStop;
@@ -998,7 +1006,7 @@ class _YouTubeControls extends StatelessWidget {
             children: [
               IconButton(
                 tooltip: 'Previous',
-                onPressed: onPrevious,
+                onPressed: controlsEnabled ? onPrevious : null,
                 icon: const Icon(
                   Icons.skip_previous_rounded,
                   color: Colors.white,
@@ -1007,7 +1015,7 @@ class _YouTubeControls extends StatelessWidget {
               ),
               IconButton(
                 tooltip: 'Back 10s',
-                onPressed: onSkipBack,
+                onPressed: controlsEnabled ? onSkipBack : null,
                 icon: const Icon(
                   Icons.replay_10_rounded,
                   color: Colors.white,
@@ -1016,7 +1024,7 @@ class _YouTubeControls extends StatelessWidget {
               ),
               IconButton(
                 tooltip: isPlaying ? 'Pause' : 'Play / Resume',
-                onPressed: onPlayPause,
+                onPressed: controlsEnabled ? onPlayPause : null,
                 icon: Icon(
                   isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
                   color: Colors.white,
@@ -1025,7 +1033,7 @@ class _YouTubeControls extends StatelessWidget {
               ),
               IconButton(
                 tooltip: 'Forward 10s',
-                onPressed: onSkipForward,
+                onPressed: controlsEnabled ? onSkipForward : null,
                 icon: const Icon(
                   Icons.forward_10_rounded,
                   color: Colors.white,
@@ -1034,12 +1042,12 @@ class _YouTubeControls extends StatelessWidget {
               ),
               IconButton(
                 tooltip: 'Stop',
-                onPressed: onStop,
+                onPressed: controlsEnabled ? onStop : null,
                 icon: const Icon(Icons.stop_rounded, color: Colors.white, size: 24),
               ),
               IconButton(
                 tooltip: 'Next',
-                onPressed: onNext,
+                onPressed: controlsEnabled ? onNext : null,
                 icon: const Icon(
                   Icons.skip_next_rounded,
                   color: Colors.white,
@@ -1048,12 +1056,12 @@ class _YouTubeControls extends StatelessWidget {
               ),
               IconButton(
                 tooltip: 'Replay',
-                onPressed: onReplay,
+                onPressed: controlsEnabled ? onReplay : null,
                 icon: const Icon(Icons.replay_rounded, color: Colors.white, size: 22),
               ),
               IconButton(
                 tooltip: muted ? 'Unmute' : 'Volume',
-                onPressed: onMuteToggle,
+                onPressed: controlsEnabled ? onMuteToggle : null,
                 icon: Icon(
                   muted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
                   color: Colors.white,
@@ -1062,7 +1070,7 @@ class _YouTubeControls extends StatelessWidget {
               ),
               const Spacer(),
               TextButton(
-                onPressed: onSpeedTap,
+                onPressed: controlsEnabled ? onSpeedTap : null,
                 style: TextButton.styleFrom(
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -1075,7 +1083,7 @@ class _YouTubeControls extends StatelessWidget {
               ),
               IconButton(
                 tooltip: exitFullscreen ? 'Exit fullscreen' : 'Fullscreen',
-                onPressed: onFullscreen,
+                onPressed: controlsEnabled ? onFullscreen : null,
                 icon: Icon(
                   exitFullscreen ? Icons.fullscreen_exit_rounded : Icons.fullscreen_rounded,
                   color: Colors.white,

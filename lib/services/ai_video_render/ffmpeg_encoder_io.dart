@@ -92,6 +92,8 @@ class FfmpegVideoEncoder {
       if (audioAbs.isNotEmpty) ...[
         '-i',
         audioAbs,
+        '-vf',
+        'tpad=stop_mode=clone:stop=-1',
       ],
       '-r',
       '$fps',
@@ -103,6 +105,10 @@ class FfmpegVideoEncoder {
         '-pix_fmt',
         'yuv420p',
         if (audioAbs.isNotEmpty) ...[
+          '-map',
+          '0:v:0',
+          '-map',
+          '1:a:0',
           '-c:a',
           'libopus',
           '-b:a',
@@ -119,6 +125,10 @@ class FfmpegVideoEncoder {
         '-crf',
         '23',
         if (audioAbs.isNotEmpty) ...[
+          '-map',
+          '0:v:0',
+          '-map',
+          '1:a:0',
           '-c:a',
           'aac',
           '-b:a',
@@ -205,6 +215,10 @@ class FfmpegVideoEncoder {
     final outAbs = ffmpegPathArg(outputPath);
     final listAbs = ffmpegPathArg(listPath);
 
+    if (audioAbs.isEmpty) {
+      throw StateError('Generated audio missing for FFmpeg mux');
+    }
+
     final args = <String>[
       '-y',
       '-f',
@@ -215,7 +229,9 @@ class FfmpegVideoEncoder {
       listAbs,
       if (audioAbs.isNotEmpty) ...['-i', audioAbs],
       '-vf',
-      'fps=$fps,format=yuv420p',
+      audioAbs.isNotEmpty
+          ? 'fps=$fps,format=yuv420p,tpad=stop_mode=clone:stop=-1'
+          : 'fps=$fps,format=yuv420p',
       '-c:v',
       'libx264',
       '-preset',
@@ -223,6 +239,10 @@ class FfmpegVideoEncoder {
       '-crf',
       '22',
       if (audioAbs.isNotEmpty) ...[
+        '-map',
+        '0:v:0',
+        '-map',
+        '1:a:0',
         '-c:a',
         'aac',
         '-b:a',
@@ -240,7 +260,7 @@ class FfmpegVideoEncoder {
     final stderrBuf = StringBuffer();
     proc.stderr.transform(SystemEncoding().decoder).listen(stderrBuf.write);
     final code = await proc.exitCode;
-    if (code != 0 || !await out.exists()) {
+    if (code != 0 || !await out.exists() || await out.length() < 8000) {
       final err = stderrBuf.toString();
       throw StateError(
         'FFmpeg timed encode failed (code $code):\n'

@@ -8,6 +8,8 @@ class StudentProfile {
     required this.email,
     required this.mobile,
     required this.targetExam,
+    this.examDate = '',
+    this.dailyStudyHours = 4,
     this.isBlocked = false,
     this.isPremium = true,
     this.assignedSubjectIds = const [],
@@ -18,6 +20,13 @@ class StudentProfile {
   final String email;
   final String mobile;
   final String targetExam;
+
+  /// Target exam calendar day as `yyyy-MM-dd`. Empty until the student sets it
+  /// in the daily planner.
+  final String examDate;
+
+  /// Hours the student can study per day. Used by the personalized planner.
+  final double dailyStudyHours;
 
   /// Set by an admin from Student Management — a blocked student is signed
   /// out immediately and cannot sign back in until unblocked.
@@ -36,6 +45,8 @@ class StudentProfile {
       email: map['email'] as String? ?? '',
       mobile: map['mobile'] as String? ?? '',
       targetExam: map['targetExam'] as String? ?? '',
+      examDate: map['examDate'] as String? ?? '',
+      dailyStudyHours: (map['dailyStudyHours'] as num?)?.toDouble() ?? 4,
       isBlocked: map['isBlocked'] as bool? ?? false,
       isPremium: map['isPremium'] as bool? ?? true,
       assignedSubjectIds: asStringList(map['assignedSubjectIds']),
@@ -48,6 +59,8 @@ class StudentProfile {
       'email': email,
       'mobile': mobile,
       'targetExam': targetExam,
+      'examDate': examDate,
+      'dailyStudyHours': dailyStudyHours,
       'isBlocked': isBlocked,
       'isPremium': isPremium,
       'assignedSubjectIds': assignedSubjectIds,
@@ -59,6 +72,8 @@ class StudentProfile {
     String? name,
     String? mobile,
     String? targetExam,
+    String? examDate,
+    double? dailyStudyHours,
     bool? isBlocked,
     bool? isPremium,
     List<String>? assignedSubjectIds,
@@ -69,6 +84,8 @@ class StudentProfile {
       email: email,
       mobile: mobile ?? this.mobile,
       targetExam: targetExam ?? this.targetExam,
+      examDate: examDate ?? this.examDate,
+      dailyStudyHours: dailyStudyHours ?? this.dailyStudyHours,
       isBlocked: isBlocked ?? this.isBlocked,
       isPremium: isPremium ?? this.isPremium,
       assignedSubjectIds: assignedSubjectIds ?? this.assignedSubjectIds,

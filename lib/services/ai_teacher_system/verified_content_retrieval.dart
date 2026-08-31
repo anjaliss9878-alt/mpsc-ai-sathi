@@ -55,6 +55,19 @@ class VerifiedTopicSource {
 
   String get subjectTitle => subject.title;
 
+  VerifiedTopicSource copyWith({String? notesText}) {
+    return VerifiedTopicSource(
+      topic: topic,
+      subject: subject,
+      chapter: chapter,
+      notesText: notesText ?? this.notesText,
+      matchScore: matchScore,
+      note: note,
+      pdfBytes: pdfBytes,
+      pdfFileName: pdfFileName,
+    );
+  }
+
   /// Adapter for the existing Gemini chapter-lesson path.
   ChapterLessonSource toChapterLessonSource() {
     final blocks = note?.pdfStructuredBlocks ?? const [];
@@ -74,7 +87,6 @@ class VerifiedTopicSource {
     if (note?.pdfStructuredBlocks.isNotEmpty == true) return true;
     final t = notesText.trim();
     if (t.length < 80) return false;
-    // Reject the loader's "no detailed notes" placeholder.
     if (t.contains('No detailed notes document found')) return false;
     return true;
   }

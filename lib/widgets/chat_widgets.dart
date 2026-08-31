@@ -5,6 +5,7 @@ import 'package:mpsc_combine_ai/models/chat_session.dart';
 import 'package:mpsc_combine_ai/models/chat_subject.dart';
 import 'package:mpsc_combine_ai/services/chat_repository.dart';
 import 'package:mpsc_combine_ai/theme/app_colors.dart';
+import 'package:mpsc_combine_ai/widgets/rag_citation_block.dart';
 
 /// Small colored chip showing a chat's auto-detected MPSC subject.
 class ChatSubjectBadge extends StatelessWidget {
@@ -109,10 +110,17 @@ class ChatBubble extends StatelessWidget {
                     message.content,
                     style: const TextStyle(color: Colors.white, height: 1.4),
                   )
-                : MarkdownBody(
-                    data: message.content,
-                    selectable: true,
-                    styleSheet: _markdownStyleSheet(),
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      MarkdownBody(
+                        data: message.content,
+                        selectable: true,
+                        styleSheet: _markdownStyleSheet(),
+                      ),
+                      if (message.citations.isNotEmpty)
+                        RagCitationBlock(citations: message.citations),
+                    ],
                   ),
           ),
           Padding(

@@ -3,10 +3,13 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:mpsc_combine_ai/models/chapter_item.dart';
 import 'package:mpsc_combine_ai/models/note_item.dart';
+import 'package:mpsc_combine_ai/models/smart_trick_item.dart';
 import 'package:mpsc_combine_ai/models/subject_item.dart';
 import 'package:mpsc_combine_ai/screens/ai_teacher_screen.dart';
 import 'package:mpsc_combine_ai/services/auth_service.dart';
+import 'package:mpsc_combine_ai/services/flashcard_repository.dart';
 import 'package:mpsc_combine_ai/services/notes_repository.dart';
+import 'package:mpsc_combine_ai/services/smart_trick_repository.dart';
 import 'package:mpsc_combine_ai/services/student_progress_repository.dart';
 import 'package:mpsc_combine_ai/theme/app_colors.dart';
 
@@ -227,6 +230,13 @@ class _FlashcardsScreenState extends State<_FlashcardsScreen> {
   bool _flipped = false;
 
   Future<List<_FlashCard>> _buildCards() async {
+    final published = await flashcardRepository.watchPublished().first;
+    if (published.isNotEmpty) {
+      return [
+        for (final c in published)
+          _FlashCard(front: c.front, back: c.back, explanation: c.explanation),
+      ];
+    }
     final packs = await _loadRevisionPacks();
     final cards = <_FlashCard>[];
     for (final p in packs) {
@@ -290,7 +300,11 @@ class _FlashcardsScreenState extends State<_FlashcardsScreen> {
                         child: Padding(
                           padding: const EdgeInsets.all(24),
                           child: Text(
-                            _flipped ? card.back : card.front,
+                            _flipped
+                                ? (card.explanation.isNotEmpty
+                                    ? '${card.back}\n\n${card.explanation}'
+                                    : card.back)
+                                : card.front,
                             textAlign: TextAlign.center,
                             style: Theme.of(context).textTheme.titleLarge?.copyWith(
                                   fontWeight: FontWeight.w700,
@@ -341,15 +355,20 @@ class _FlashcardsScreenState extends State<_FlashcardsScreen> {
 }
 
 class _FlashCard {
-  const _FlashCard({required this.front, required this.back});
+  const _FlashCard({
+    required this.front,
+    required this.back,
+    this.explanation = '',
+  });
   final String front;
   final String back;
+  final String explanation;
 }
 
 class _MemoryTricksScreen extends StatelessWidget {
   const _MemoryTricksScreen();
 
-  static const _tricks = [
+  static const _fallback = [
     (
       'Polity acronyms',
       'Remember DPSPs with “EQUALITY”: Education, Quotas, Uniform civil code, Alcohol prohibition, Living wage, Integrity of courts, Temp workers, Youth.',
@@ -376,23 +395,70 @@ class _MemoryTricksScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Memory Tricks')),
-      body: ListView.separated(
-        padding: const EdgeInsets.all(16),
-        itemCount: _tricks.length,
-        separatorBuilder: (_, _) => const SizedBox(height: 10),
-        itemBuilder: (context, i) {
-          final t = _tricks[i];
-          return Card(
-            child: ListTile(
-              leading: const Icon(Icons.psychology_alt_rounded, color: AppColors.orange),
-              title: Text(t.$1, style: const TextStyle(fontWeight: FontWeight.w700)),
-              subtitle: Padding(
-                padding: const EdgeInsets.only(top: 6),
-                child: Text(t.$2, style: const TextStyle(height: 1.35)),
-              ),
-              isThreeLine: true,
-              onTap: () => _markRevisionProgress(t.$1),
-            ),
+      body: StreamBuilder<List<SmartTrickItem>>(
+        stream: smartTrickRepository.watchPublished(),
+        builder: (context, snapshot) {
+          final published = snapshot.data ?? const <SmartTrickItem>[];
+          if (published.isNotEmpty) {
+            return ListView.separated(
+              padding: const EdgeInsets.all(16),
+              itemCount: published.length,
+              separatorBuilder: (_, _) => const SizedBox(height: 10),
+              itemBuilder: (context, i) {
+                final t = published[i];
+                return Card(
+                  child: ListTile(
+                    leading: const Icon(
+                      Icons.psychology_alt_rounded,
+                      color: AppColors.orange,
+                    ),
+                    title: Text(
+                      t.title,
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    subtitle: Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Text(
+                        [
+                          t.memoryTrick,
+                          if (t.explanation.isNotEmpty) t.explanation,
+                          if (t.example.isNotEmpty) 'e.g. ${t.example}',
+                        ].join('\n'),
+                        style: const TextStyle(height: 1.35),
+                      ),
+                    ),
+                    isThreeLine: true,
+                    onTap: () => _markRevisionProgress(t.title),
+                  ),
+                );
+              },
+            );
+          }
+          return ListView.separated(
+            padding: const EdgeInsets.all(16),
+            itemCount: _fallback.length,
+            separatorBuilder: (_, _) => const SizedBox(height: 10),
+            itemBuilder: (context, i) {
+              final t = _fallback[i];
+              return Card(
+                child: ListTile(
+                  leading: const Icon(
+                    Icons.psychology_alt_rounded,
+                    color: AppColors.orange,
+                  ),
+                  title: Text(
+                    t.$1,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  subtitle: Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Text(t.$2, style: const TextStyle(height: 1.35)),
+                  ),
+                  isThreeLine: true,
+                  onTap: () => _markRevisionProgress(t.$1),
+                ),
+              );
+            },
           );
         },
       ),

@@ -1,16 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:mpsc_combine_ai/admin/notes/admin_chapter_form_screen.dart';
-import 'package:mpsc_combine_ai/admin/notes/admin_note_form_screen.dart';
+import 'package:mpsc_combine_ai/admin/notes/admin_topics_screen.dart';
 import 'package:mpsc_combine_ai/admin/widgets/admin_list_tile.dart';
 import 'package:mpsc_combine_ai/admin/widgets/admin_scaffold.dart';
 import 'package:mpsc_combine_ai/admin/widgets/confirm_delete_dialog.dart';
 import 'package:mpsc_combine_ai/models/chapter_item.dart';
+import 'package:mpsc_combine_ai/models/content_index.dart';
 import 'package:mpsc_combine_ai/models/subject_item.dart';
 import 'package:mpsc_combine_ai/services/audit_log_repository.dart';
+import 'package:mpsc_combine_ai/services/content_knowledge_indexer.dart';
 import 'package:mpsc_combine_ai/services/notes_repository.dart';
 import 'package:mpsc_combine_ai/widgets/async_state_widgets.dart';
 
-/// Admin Topics list for one Subject (Firestore `chapters` collection).
+/// Admin Chapters list for one Subject (Firestore `chapters` collection).
 class AdminChaptersScreen extends StatefulWidget {
   const AdminChaptersScreen({super.key, required this.subject});
 
@@ -39,28 +41,32 @@ class _AdminChaptersScreenState extends State<AdminChaptersScreen> {
   Widget build(BuildContext context) {
     final subject = widget.subject;
     return AdminScaffold(
-      title: '${subject.title} — Topics',
+      title: '${subject.title} — Chapters',
       floatingActionButton: FloatingActionButton(
         onPressed: () => Navigator.of(context).push(
           MaterialPageRoute<void>(
-            builder: (_) => AdminChapterFormScreen(subjectId: subject.id),
+            builder: (_) => AdminChapterFormScreen(
+              subjectId: subject.id,
+              examId: subject.examId,
+              nodeType: contentNodeTypeToString(ContentNodeType.chapter),
+            ),
           ),
         ),
         child: const Icon(Icons.add_rounded),
       ),
       body: StreamBuilder<List<ChapterItem>>(
-        stream: notesRepository.watchChapters(subject.id),
+        stream: notesRepository.watchRootChapters(subject.id),
         builder: (context, snapshot) {
           if (snapshot.hasError) {
-            return ErrorState(message: 'Could not load topics: ${snapshot.error}');
+            return ErrorState(message: 'Could not load chapters: ${snapshot.error}');
           }
           if (!snapshot.hasData) return const LoadingState();
           final all = snapshot.data!;
           final chapters = _filter(all);
           if (all.isEmpty) {
             return const EmptyState(
-              message: 'No topics yet. Tap + to add the first topic '
-                  '(e.g. प्रस्तावना, मूलभूत हक्क, संसद).',
+              message: 'No chapters yet. Tap + to add the first chapter '
+                  '(e.g. Indian Constitution).',
               icon: Icons.menu_book_outlined,
             );
           }
@@ -70,7 +76,7 @@ class _AdminChaptersScreenState extends State<AdminChaptersScreen> {
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                 child: TextField(
                   decoration: const InputDecoration(
-                    hintText: 'Search topics…',
+                    hintText: 'Search chapters…',
                     prefixIcon: Icon(Icons.search_rounded),
                   ),
                   onChanged: (v) => setState(() => _query = v),
@@ -81,7 +87,7 @@ class _AdminChaptersScreenState extends State<AdminChaptersScreen> {
                 child: Align(
                   alignment: Alignment.centerLeft,
                   child: Text(
-                    'Tap a topic to edit title/PDF/notes. Drag ☰ to reorder.',
+                    'Tap a chapter to manage Topics. Drag ☰ to reorder.',
                     style: TextStyle(color: Colors.grey, fontSize: 12),
                   ),
                 ),
@@ -89,7 +95,7 @@ class _AdminChaptersScreenState extends State<AdminChaptersScreen> {
               Expanded(
                 child: chapters.isEmpty
                     ? const EmptyState(
-                        message: 'No topics match your search.',
+                        message: 'No chapters match your search.',
                         icon: Icons.search_off_rounded,
                       )
                     : ReorderableListView.builder(
@@ -99,7 +105,7 @@ class _AdminChaptersScreenState extends State<AdminChaptersScreen> {
                           if (_query.trim().isNotEmpty) {
                             showAdminMessage(
                               context,
-                              'Clear search before reordering topics.',
+                              'Clear search before reordering chapters.',
                             );
                             return;
                           }
@@ -120,19 +126,18 @@ class _AdminChaptersScreenState extends State<AdminChaptersScreen> {
                         },
                         itemBuilder: (context, index) {
                           final chapter = chapters[index];
-                          final minutes = chapter.estimatedStudyMinutes;
                           return AdminListTile(
                             key: ValueKey(chapter.id),
                             title: chapter.title,
                             subtitle:
-                                '${chapter.published ? 'Published' : 'Draft'} · '
+                                '${chapter.published ? 'Active' : 'Inactive'} · '
                                 'id=${chapter.id}'
-                                '${minutes > 0 ? ' · ~$minutes min' : ''} · tap notes / edit',
-                            icon: Icons.menu_book_rounded,
+                                '${chapter.slug.isNotEmpty ? ' · ${chapter.slug}' : ''}',
+                            icon: Icons.folder_rounded,
                             onTap: () => Navigator.of(context).push(
                               MaterialPageRoute<void>(
-                                builder: (_) => AdminNoteFormScreen(
-                                  subjectId: subject.id,
+                                builder: (_) => AdminTopicsScreen(
+                                  subject: subject,
                                   chapter: chapter,
                                 ),
                               ),
@@ -141,22 +146,33 @@ class _AdminChaptersScreenState extends State<AdminChaptersScreen> {
                               MaterialPageRoute<void>(
                                 builder: (_) => AdminChapterFormScreen(
                                   subjectId: subject.id,
+                                  examId: subject.examId,
+                                  nodeType: chapter.nodeType.isNotEmpty
+                                      ? chapter.nodeType
+                                      : contentNodeTypeToString(
+                                          ContentNodeType.chapter,
+                                        ),
                                   existing: chapter,
                                 ),
                               ),
                             ),
                             onDelete: () async {
-                              final confirmed = await confirmDelete(context, chapter.title);
+                              final confirmed =
+                                  await confirmDelete(context, chapter.title);
                               if (!confirmed) return;
                               try {
                                 await notesRepository.deleteChapter(chapter.id);
+                                try {
+                                  await contentKnowledgeIndexer
+                                      .removeSyllabusNode(chapter.id);
+                                } catch (_) {}
                                 await auditLogRepository.log(
                                   action: 'delete',
-                                  module: 'Topics',
+                                  module: 'Chapters',
                                   targetLabel: chapter.title,
                                 );
                                 if (context.mounted) {
-                                  showAdminMessage(context, 'Topic deleted.');
+                                  showAdminMessage(context, 'Chapter deleted.');
                                 }
                               } catch (e) {
                                 if (context.mounted) showAdminError(context, e);

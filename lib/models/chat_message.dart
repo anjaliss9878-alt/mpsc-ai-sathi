@@ -1,10 +1,12 @@
+import 'package:mpsc_combine_ai/models/rag_citation.dart';
+
 /// Who a given AI Teacher chat message belongs to.
 enum ChatRole { user, assistant }
 
 /// A single message inside an AI Teacher chat session.
 ///
 /// Persisted at `students/{uid}/chats/{chatId}/messages/{id}` once a session
-/// exists in Firestore (see `ChatRepository`); [id] is null for messages that
+/// exists in Firestore (see [ChatRepository]); [id] is null for messages that
 /// only exist locally (e.g. the client-only welcome greeting, or a message
 /// whose write to Firestore hasn't completed/succeeded yet).
 class ChatMessage {
@@ -13,6 +15,7 @@ class ChatMessage {
     required this.role,
     required this.content,
     required this.timestamp,
+    this.citations = const [],
   });
 
   final String? id;
@@ -20,14 +23,22 @@ class ChatMessage {
   final String content;
   final DateTime timestamp;
 
+  /// Source-grounded citations from RAG chunks (never Gemini-invented pages).
+  final List<RagCitation> citations;
+
   bool get isUser => role == ChatRole.user;
 
-  ChatMessage copyWith({String? id, String? content}) {
+  ChatMessage copyWith({
+    String? id,
+    String? content,
+    List<RagCitation>? citations,
+  }) {
     return ChatMessage(
       id: id ?? this.id,
       role: role,
       content: content ?? this.content,
       timestamp: timestamp,
+      citations: citations ?? this.citations,
     );
   }
 
@@ -36,6 +47,7 @@ class ChatMessage {
       'role': role.name,
       'content': content,
       'timestamp': timestamp.toIso8601String(),
+      'citations': citations.map((c) => c.toMap()).toList(),
     };
   }
 
@@ -47,6 +59,7 @@ class ChatMessage {
       content: map['content'] as String? ?? '',
       timestamp:
           rawTimestamp != null ? DateTime.tryParse(rawTimestamp) ?? DateTime.now() : DateTime.now(),
+      citations: citationsFromMaps(map['citations']),
     );
   }
 }

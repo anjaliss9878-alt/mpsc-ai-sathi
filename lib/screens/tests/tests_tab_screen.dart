@@ -6,6 +6,7 @@ import 'package:mpsc_combine_ai/screens/mock_tests_screen.dart';
 import 'package:mpsc_combine_ai/screens/my_performance_screen.dart';
 import 'package:mpsc_combine_ai/screens/pyq_screen.dart';
 import 'package:mpsc_combine_ai/screens/result_screen.dart';
+import 'package:mpsc_combine_ai/screens/weakness/ai_weakness_tracker_screen.dart';
 import 'package:mpsc_combine_ai/services/auth_service.dart';
 import 'package:mpsc_combine_ai/services/student_progress_repository.dart';
 import 'package:mpsc_combine_ai/services/test_repository.dart';
@@ -14,7 +15,11 @@ import 'package:mpsc_combine_ai/widgets/async_state_widgets.dart';
 
 /// Tests bottom-nav tab: upcoming tests, attempt history, rank/analytics.
 class TestsTabScreen extends StatelessWidget {
-  const TestsTabScreen({super.key});
+  const TestsTabScreen({super.key, this.embeddedInTab = true});
+
+  /// When true (bottom-nav tab), the back button is hidden.
+  /// When false (pushed from Home), the AppBar shows a back button.
+  final bool embeddedInTab;
 
   @override
   Widget build(BuildContext context) {
@@ -22,12 +27,14 @@ class TestsTabScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Tests'),
-        automaticallyImplyLeading: false,
+        automaticallyImplyLeading: !embeddedInTab,
         actions: [
           IconButton(
             tooltip: 'Analytics',
             onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(builder: (_) => const MyPerformanceScreen()),
+              MaterialPageRoute<void>(
+                builder: (_) => const AiWeaknessTrackerScreen(),
+              ),
             ),
             icon: const Icon(Icons.insights_rounded),
           ),
@@ -43,7 +50,9 @@ class TestsTabScreen extends StatelessWidget {
                   label: 'Mock Tests',
                   icon: Icons.assignment_rounded,
                   onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(builder: (_) => const MockTestsScreen()),
+                    MaterialPageRoute<void>(
+                      builder: (_) => const MockTestsScreen(),
+                    ),
                   ),
                 ),
               ),
@@ -62,16 +71,18 @@ class TestsTabScreen extends StatelessWidget {
           const SizedBox(height: 20),
           Text(
             'Upcoming / Available',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 8),
           StreamBuilder<List<TestItem>>(
-            stream: testRepository.watchAll(),
+            stream: testRepository.watchPublished(),
             builder: (context, snapshot) {
               if (snapshot.hasError) {
-                return ErrorState(message: 'Could not load tests.\n${snapshot.error}');
+                return ErrorState(
+                  message: 'Could not load tests.\n${snapshot.error}',
+                );
               }
               if (!snapshot.hasData) return const LoadingState();
               final tests = snapshot.data!;
@@ -85,21 +96,30 @@ class TestsTabScreen extends StatelessWidget {
                 children: tests.take(10).map((test) {
                   return Card(
                     child: ListTile(
-                      leading: const Icon(Icons.assignment_turned_in_rounded, color: AppColors.navy),
-                      title: Text(test.title, style: const TextStyle(fontWeight: FontWeight.w600)),
+                      leading: const Icon(
+                        Icons.assignment_turned_in_rounded,
+                        color: AppColors.navy,
+                      ),
+                      title: Text(
+                        test.title,
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
                       subtitle: Text(
                         test.subtitle.isNotEmpty
                             ? test.subtitle
                             : '${test.questions.length} Q · ${test.durationSeconds ~/ 60} min',
                       ),
-                      trailing: const Icon(Icons.chevron_right_rounded, color: AppColors.orange),
+                      trailing: const Icon(
+                        Icons.chevron_right_rounded,
+                        color: AppColors.orange,
+                      ),
                       onTap: test.questions.isEmpty
                           ? null
                           : () => Navigator.of(context).push(
-                                MaterialPageRoute<void>(
-                                  builder: (_) => CbtTestScreen(test: test),
-                                ),
+                              MaterialPageRoute<void>(
+                                builder: (_) => CbtTestScreen(test: test),
                               ),
+                            ),
                     ),
                   );
                 }).toList(),
@@ -109,9 +129,9 @@ class TestsTabScreen extends StatelessWidget {
           const SizedBox(height: 20),
           Text(
             'Attempt history',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 8),
           if (uid == null)
@@ -127,20 +147,24 @@ class TestsTabScreen extends StatelessWidget {
                 final attempts = snapshot.data!;
                 if (attempts.isEmpty) {
                   return const EmptyState(
-                    message: 'No attempts yet. Take a mock test to see history & rank.',
+                    message:
+                        'No attempts yet. Take a mock test to see history & rank.',
                     icon: Icons.history_rounded,
                   );
                 }
-                final avg = attempts.map((a) => a.percentage).fold<double>(0, (s, v) => s + v) /
+                final avg =
+                    attempts
+                        .map((a) => a.percentage)
+                        .fold<double>(0, (s, v) => s + v) /
                     attempts.length;
                 // Simple cohort-free rank estimate from personal average.
                 final rankEstimate = avg >= 85
                     ? 5
                     : avg >= 70
-                        ? 25
-                        : avg >= 55
-                            ? 60
-                            : 120;
+                    ? 25
+                    : avg >= 55
+                    ? 60
+                    : 120;
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
@@ -149,9 +173,18 @@ class TestsTabScreen extends StatelessWidget {
                         padding: const EdgeInsets.all(16),
                         child: Row(
                           children: [
-                            _MiniStat(label: 'Attempts', value: '${attempts.length}'),
-                            _MiniStat(label: 'Avg %', value: '${avg.toStringAsFixed(0)}%'),
-                            _MiniStat(label: 'Est. Rank', value: '#$rankEstimate'),
+                            _MiniStat(
+                              label: 'Attempts',
+                              value: '${attempts.length}',
+                            ),
+                            _MiniStat(
+                              label: 'Avg %',
+                              value: '${avg.toStringAsFixed(0)}%',
+                            ),
+                            _MiniStat(
+                              label: 'Est. Rank',
+                              value: '#$rankEstimate',
+                            ),
                           ],
                         ),
                       ),
@@ -163,8 +196,10 @@ class TestsTabScreen extends StatelessWidget {
                           title: Text(a.testTitle),
                           subtitle: Text(
                             '${a.percentage.toStringAsFixed(0)}% · '
-                            '${a.correct}/${a.totalQuestions} · '
-                            '${a.dateTime.toLocal()}'.split('.').first,
+                                    '${a.correct}/${a.totalQuestions} · '
+                                    '${a.dateTime.toLocal()}'
+                                .split('.')
+                                .first,
                           ),
                           trailing: const Icon(Icons.chevron_right_rounded),
                           onTap: () {
@@ -191,7 +226,8 @@ class TestsTabScreen extends StatelessWidget {
                             }
                             Navigator.of(context).push(
                               MaterialPageRoute<void>(
-                                builder: (_) => AnswerAnalysisScreen(result: result),
+                                builder: (_) =>
+                                    AnswerAnalysisScreen(result: result),
                               ),
                             );
                           },
@@ -267,7 +303,13 @@ class _MiniStat extends StatelessWidget {
               fontSize: 18,
             ),
           ),
-          Text(label, style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+          Text(
+            label,
+            style: const TextStyle(
+              color: AppColors.textSecondary,
+              fontSize: 12,
+            ),
+          ),
         ],
       ),
     );

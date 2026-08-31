@@ -60,7 +60,7 @@ class ContentSearchService {
       chaptersBySubject[s.id] = await _notes.watchPublishedChapters(s.id).first;
     }
     final notes = await _notes.watchPublishedNotes().first;
-    final mcqs = (await _mcqs.watchAll().first).where((m) => m.published).toList();
+    final mcqs = await _mcqs.watchPublished().first;
 
     _subjectsCache = subjects;
     _chaptersBySubject = chaptersBySubject;

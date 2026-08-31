@@ -146,7 +146,7 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
       case SearchResultKind.question:
         final mcq = hit.mcq;
         if (mcq == null) return;
-        final all = await mcqRepository.watchAll().first;
+        final all = await mcqRepository.watchPublished().first;
         final setQs = all.where((q) => q.setTitle == mcq.setTitle).toList();
         if (!mounted) return;
         await Navigator.of(context).push(

@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:mpsc_combine_ai/admin/students/admin_student_analytics_screen.dart';
 import 'package:mpsc_combine_ai/admin/widgets/confirm_delete_dialog.dart';
 import 'package:mpsc_combine_ai/models/student_profile.dart';
 import 'package:mpsc_combine_ai/models/subject_item.dart';
@@ -324,6 +325,22 @@ class _StudentDetailDialogState extends State<_StudentDetailDialog> {
                 },
               ),
               const Divider(height: 24),
+              FilledButton.icon(
+                onPressed: () {
+                  final navigator = Navigator.of(context);
+                  final profile = student;
+                  navigator.pop();
+                  navigator.push(
+                    MaterialPageRoute<void>(
+                      builder: (_) =>
+                          AdminStudentAnalyticsScreen(student: profile),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.insights_rounded),
+                label: const Text('View planner, weakness & performance'),
+              ),
+              const SizedBox(height: 12),
               const Text('Progress', style: TextStyle(fontWeight: FontWeight.w600)),
               const SizedBox(height: 8),
               FutureBuilder<Map<String, int>>(

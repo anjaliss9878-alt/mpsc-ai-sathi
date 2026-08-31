@@ -7,7 +7,7 @@ const kDhadaPreparing = 'AI धडा तयार करत आहे...';
 const kEnterTopic = 'कृपया विषय लिहा.';
 const kLessonFailed = 'AI धडा तयार करता आला नाही. कृपया पुन्हा प्रयत्न करा.';
 const kAudioUnavailable =
-    'आवाज सध्या उपलब्ध नाही. धडा वाचून अभ्यास करू शकता.';
+    'AI Teacher चा आवाज तयार करता आला नाही. कृपया पुन्हा प्रयत्न करा.';
 const kGenericRetry = 'काहीतरी चुकले. कृपया पुन्हा प्रयत्न करा.';
 
 String studentFacingError(Object error) {

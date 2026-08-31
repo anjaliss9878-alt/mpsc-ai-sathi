@@ -134,6 +134,16 @@ class LessonProgressRepository {
     });
   }
 
+  /// Full classroom history for syllabus / planner (not the UI preview limit).
+  Future<List<ClassroomProgress>> getAllOnce(String uid) async {
+    final snap = await _db
+        .collection('students')
+        .doc(uid)
+        .collection('classroomProgress')
+        .get();
+    return snap.docs.map((d) => ClassroomProgress.fromMap(d.data())).toList();
+  }
+
   Stream<ClassroomProgress?> watchProgress(String uid, String chapterId) {
     return _doc(uid, chapterId).snapshots().map((snap) {
       if (!snap.exists || snap.data() == null) return null;

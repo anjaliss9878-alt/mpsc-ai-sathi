@@ -13,6 +13,9 @@ class AiLesson {
     this.chapterId = '',
     this.subjectId = '',
     this.subjectTitle = '',
+    this.examId = '',
+    this.targetGroup = '',
+    this.topicId = '',
     this.status = AiLessonStatus.queued,
     this.stage = AiLessonStage.preparing,
     this.progress = 0,
@@ -20,6 +23,7 @@ class AiLesson {
     this.pdfPath = '',
     this.audioUrl = '',
     this.videoUrl = '',
+    this.finalVideoUrl = '',
     this.thumbnailUrl = '',
     this.duration = 0,
     this.errorMessage = '',
@@ -38,6 +42,9 @@ class AiLesson {
   final String chapterId;
   final String subjectId;
   final String subjectTitle;
+  final String examId;
+  final String targetGroup;
+  final String topicId;
   final AiLessonStatus status;
   final AiLessonStage stage;
   final int progress;
@@ -45,6 +52,8 @@ class AiLesson {
   final String pdfPath;
   final String audioUrl;
   final String videoUrl;
+  /// Verified playback URL or Storage path for the muxed MP4. Never show in UI.
+  final String finalVideoUrl;
   final String thumbnailUrl;
   final double duration;
   final String errorMessage;
@@ -61,8 +70,10 @@ class AiLesson {
   bool get isReady => status == AiLessonStatus.ready;
   bool get isFailed => status == AiLessonStatus.failed;
   bool get isActive => isQueued || isGenerating;
-  bool get hasVideo => videoUrl.trim().isNotEmpty;
+  bool get hasVideo =>
+      videoUrl.trim().isNotEmpty || finalVideoUrl.trim().isNotEmpty;
   bool get hasAudio => audioUrl.trim().isNotEmpty;
+  bool get isPlayable => isReady && hasAudio && hasVideo;
 
   factory AiLesson.fromMap(Map<String, dynamic> map, String id) {
     final rawLesson = map['lesson'];
@@ -73,6 +84,9 @@ class AiLesson {
       chapterId: map['chapterId'] as String? ?? '',
       subjectId: map['subjectId'] as String? ?? '',
       subjectTitle: map['subjectTitle'] as String? ?? '',
+      examId: map['examId'] as String? ?? '',
+      targetGroup: map['targetGroup'] as String? ?? '',
+      topicId: map['topicId'] as String? ?? '',
       status: AiLessonStatusX.parse(map['status'] as String?),
       stage: AiLessonStageX.parse(map['stage'] as String?),
       progress: (map['progress'] as num?)?.round().clamp(0, 100) ?? 0,
@@ -84,6 +98,7 @@ class AiLesson {
       pdfPath: map['pdfPath'] as String? ?? '',
       audioUrl: map['audioUrl'] as String? ?? map['audioPath'] as String? ?? '',
       videoUrl: map['videoUrl'] as String? ?? map['videoPath'] as String? ?? '',
+      finalVideoUrl: map['finalVideoUrl'] as String? ?? '',
       thumbnailUrl:
           map['thumbnailUrl'] as String? ?? map['thumbnailPath'] as String? ?? '',
       duration: (map['duration'] as num?)?.toDouble() ?? 0,
@@ -111,6 +126,9 @@ class AiLesson {
       'chapterId': chapterId,
       'subjectId': subjectId,
       'subjectTitle': subjectTitle,
+      'examId': examId,
+      'targetGroup': targetGroup,
+      'topicId': topicId,
       'status': status.wire,
       'stage': stage.wire,
       'progress': progress.clamp(0, 100),
@@ -118,6 +136,7 @@ class AiLesson {
       'pdfPath': pdfPath,
       'audioUrl': audioUrl,
       'videoUrl': videoUrl,
+      'finalVideoUrl': finalVideoUrl,
       'thumbnailUrl': thumbnailUrl,
       'duration': duration,
       'errorMessage': errorMessage,
@@ -305,11 +324,11 @@ extension AiLessonPlaybackX on AiLessonPlayback {
 /// Student-visible copy. Never includes stack traces, HTTP, or Storage URLs.
 String studentFacingLessonMessage(Object error) {
   final s = error.toString().toLowerCase();
-  if (s.contains('tts') ||
-      s.contains('voice') ||
-      s.contains('audio') ||
-      s.contains('speech')) {
-    return 'Voice generation is taking longer than expected';
+  if (s.contains('429') ||
+      s.contains('retry') ||
+      s.contains('unavailable') ||
+      s.contains('rate limit')) {
+    return 'Retrying automatically';
   }
   if (s.contains('timeout') ||
       s.contains('render') ||
@@ -317,8 +336,11 @@ String studentFacingLessonMessage(Object error) {
       s.contains('encode')) {
     return 'Video is being prepared';
   }
-  if (s.contains('retry') || s.contains('unavailable') || s.contains('429')) {
-    return 'Retrying automatically';
+  if (s.contains('tts') ||
+      s.contains('voice') ||
+      s.contains('audio') ||
+      s.contains('speech')) {
+    return 'Voice generation is taking longer than expected';
   }
   return 'Lesson will be available shortly';
 }

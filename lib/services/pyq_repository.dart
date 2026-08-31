@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:mpsc_combine_ai/models/content_index.dart';
 import 'package:mpsc_combine_ai/models/pyq_item.dart';
 
 /// Reads/writes Previous Year Question entries in Firestore at `pyqs/{id}`.
@@ -20,14 +21,24 @@ class PyqRepository {
   }
 
   Stream<List<PyqItem>> watchPublished() {
-    return watchAll().map((all) => all.where((p) => p.published).toList());
+    return watchAll().map(
+      (all) => all.where((p) => p.isStudentVisible).toList(),
+    );
   }
 
   Stream<List<PyqItem>> watchForChapter(String chapterId) {
     if (chapterId.isEmpty) return Stream.value(const []);
     return watchAll().map(
       (all) => all
-          .where((p) => p.published && p.chapterId == chapterId)
+          .where(
+            (p) =>
+                p.isStudentVisible &&
+                contentLinkedToTopic(
+                  topicId: chapterId,
+                  topicIdField: p.topicId,
+                  chapterIdField: p.chapterId,
+                ),
+          )
           .toList(),
     );
   }
@@ -36,7 +47,7 @@ class PyqRepository {
     if (subjectId.isEmpty) return Stream.value(const []);
     return watchAll().map(
       (all) => all
-          .where((p) => p.published && p.subjectId == subjectId)
+          .where((p) => p.isStudentVisible && p.subjectId == subjectId)
           .toList(),
     );
   }

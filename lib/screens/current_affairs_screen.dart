@@ -37,7 +37,7 @@ class _CurrentAffairsScreenState extends State<CurrentAffairsScreen> {
         ],
       ),
       body: StreamBuilder<List<CurrentAffairItem>>(
-        stream: currentAffairsRepository.watchAll(),
+        stream: currentAffairsRepository.watchPublished(),
         builder: (context, snapshot) {
           if (snapshot.hasError) {
             return ErrorState(
@@ -174,6 +174,25 @@ class _CurrentAffairsScreenState extends State<CurrentAffairsScreen> {
                           height: 1.5,
                         ),
                   ),
+                  if (item.detailedExplanation.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    Text(
+                      item.detailedExplanation,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: AppColors.textPrimary,
+                            height: 1.5,
+                          ),
+                    ),
+                  ],
+                  if (item.source.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      'Source: ${item.source}',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: AppColors.textSecondary,
+                          ),
+                    ),
+                  ],
                   const SizedBox(height: 16),
                   Wrap(
                     spacing: 8,

@@ -9,22 +9,33 @@ import 'package:mpsc_combine_ai/models/chapter_item.dart';
 import 'package:mpsc_combine_ai/models/note_item.dart';
 import 'package:mpsc_combine_ai/models/pdf_content_block.dart';
 import 'package:mpsc_combine_ai/services/audit_log_repository.dart';
+import 'package:mpsc_combine_ai/services/content_knowledge_indexer.dart';
 import 'package:mpsc_combine_ai/services/notes_repository.dart';
 import 'package:mpsc_combine_ai/services/pdf_structure_extract_service.dart';
 import 'package:mpsc_combine_ai/services/storage_service.dart';
 import 'package:mpsc_combine_ai/theme/app_colors.dart';
 import 'package:mpsc_combine_ai/widgets/async_state_widgets.dart';
 
-/// Fast Topic upload: Subject → Topic title → PDF Notes / Paste Notes → Save.
+/// Fast Chapter / Topic upload: title → optional PDF Notes / Paste Notes → Save.
 ///
 /// PDF notes are stored in Firebase Storage, mirrored on `chapter.pdfUrl` +
 /// note attachments, and structure-extracted for AI Classroom slides.
 /// Existing text-notes and Video workflows stay intact.
 class AdminChapterFormScreen extends StatefulWidget {
-  const AdminChapterFormScreen({super.key, required this.subjectId, this.existing});
+  const AdminChapterFormScreen({
+    super.key,
+    required this.subjectId,
+    this.existing,
+    this.examId = '',
+    this.parentChapterId = '',
+    this.nodeType = '',
+  });
 
   final String subjectId;
   final ChapterItem? existing;
+  final String examId;
+  final String parentChapterId;
+  final String nodeType;
 
   @override
   State<AdminChapterFormScreen> createState() => _AdminChapterFormScreenState();
@@ -49,6 +60,18 @@ class _AdminChapterFormScreenState extends State<AdminChapterFormScreen> {
   List<NoteAttachment> _attachments = [];
   List<PdfContentBlock> _pdfBlocks = [];
   NoteItem? _initialNote;
+
+  bool get _isTopic =>
+      widget.nodeType == 'topic' ||
+      widget.parentChapterId.isNotEmpty ||
+      widget.existing?.parentChapterId.isNotEmpty == true;
+
+  String get _formTitle {
+    if (_isTopic) {
+      return widget.existing == null ? 'Add Topic' : 'Edit Topic';
+    }
+    return widget.existing == null ? 'Add Chapter' : 'Edit Chapter';
+  }
 
   @override
   void initState() {
@@ -231,6 +254,15 @@ class _AdminChapterFormScreenState extends State<AdminChapterFormScreen> {
         description: existing?.description ?? '',
         slug: slug,
         titleEn: existing?.titleEn ?? '',
+        examId: widget.examId.isNotEmpty
+            ? widget.examId
+            : (existing?.examId ?? ''),
+        parentChapterId: widget.parentChapterId.isNotEmpty
+            ? widget.parentChapterId
+            : (existing?.parentChapterId ?? ''),
+        nodeType: widget.nodeType.isNotEmpty
+            ? widget.nodeType
+            : (existing?.nodeType ?? ''),
         published: _published,
         tags: existing?.tags ?? const [],
         thumbnailUrl: existing?.thumbnailUrl ?? '',
@@ -245,7 +277,7 @@ class _AdminChapterFormScreenState extends State<AdminChapterFormScreen> {
         chapterId = await notesRepository.addChapter(chapter);
         await auditLogRepository.log(
           action: 'create',
-          module: 'Topics',
+          module: _isTopic ? 'Topics' : 'Chapters',
           targetLabel: chapter.title,
         );
       } else {
@@ -260,6 +292,9 @@ class _AdminChapterFormScreenState extends State<AdminChapterFormScreen> {
             description: chapter.description,
             slug: chapter.slug,
             titleEn: chapter.titleEn,
+            examId: chapter.examId,
+            parentChapterId: chapter.parentChapterId,
+            nodeType: chapter.nodeType,
             published: chapter.published,
             tags: chapter.tags,
             thumbnailUrl: chapter.thumbnailUrl,
@@ -271,10 +306,34 @@ class _AdminChapterFormScreenState extends State<AdminChapterFormScreen> {
         );
         await auditLogRepository.log(
           action: 'update',
-          module: 'Topics',
+          module: _isTopic ? 'Topics' : 'Chapters',
           targetLabel: chapter.title,
         );
       }
+
+      final savedChapter = ChapterItem(
+        id: chapterId,
+        subjectId: widget.subjectId,
+        title: chapter.title,
+        order: chapter.order,
+        estimatedStudyMinutes: chapter.estimatedStudyMinutes,
+        description: chapter.description,
+        slug: chapter.slug,
+        titleEn: chapter.titleEn,
+        examId: chapter.examId,
+        parentChapterId: chapter.parentChapterId,
+        nodeType: chapter.nodeType,
+        published: chapter.published,
+        tags: chapter.tags,
+        thumbnailUrl: chapter.thumbnailUrl,
+        pdfUrl: chapter.pdfUrl,
+        aiSummary: chapter.aiSummary,
+        revisionNotes: chapter.revisionNotes,
+        classroomLessonId: chapter.classroomLessonId,
+      );
+      try {
+        await contentKnowledgeIndexer.syncSyllabus(savedChapter);
+      } catch (_) {}
 
       // Only write notes fields owned by this screen; omit the rest so
       // AdminNoteFormScreen / legacy data stay intact.
@@ -282,7 +341,13 @@ class _AdminChapterFormScreenState extends State<AdminChapterFormScreen> {
       final savedNoteId = await notesRepository.saveNote(
         noteId: _noteId,
         subjectId: widget.subjectId,
-        chapterId: chapterId,
+        chapterId: _isTopic
+            ? (widget.parentChapterId.isNotEmpty
+                ? widget.parentChapterId
+                : chapterId)
+            : chapterId,
+        examId: widget.examId,
+        topicId: _isTopic ? chapterId : '',
         title: _noteTitle.trim().isNotEmpty ? _noteTitle.trim() : chapter.title,
         contentMarkdown: _markdownController.text,
         attachments: _attachments,
@@ -308,8 +373,8 @@ class _AdminChapterFormScreenState extends State<AdminChapterFormScreen> {
         showAdminMessage(
           context,
           _published
-              ? 'Topic saved — visible to students under this subject now.'
-              : 'Topic saved as Draft — hidden from students until Published.',
+              ? '${_isTopic ? 'Topic' : 'Chapter'} saved — visible to students under this subject now.'
+              : '${_isTopic ? 'Topic' : 'Chapter'} saved as Draft — hidden from students until Published.',
         );
         Navigator.of(context).pop();
       }
@@ -326,7 +391,7 @@ class _AdminChapterFormScreenState extends State<AdminChapterFormScreen> {
     if (!_loaded) {
       return Scaffold(
         appBar: AppBar(
-          title: Text(widget.existing == null ? 'Add Topic' : 'Edit Topic'),
+          title: Text(_formTitle),
         ),
         body: const LoadingState(),
       );
@@ -336,7 +401,7 @@ class _AdminChapterFormScreenState extends State<AdminChapterFormScreen> {
     final busyPdf = _isUploadingPdf || _isExtractingPdf;
 
     return AdminFormScaffold(
-      title: widget.existing == null ? 'Add Topic' : 'Edit Topic',
+      title: _formTitle,
       isSaving: _isSaving || busyPdf,
       onSave: _save,
       maxContentWidth: 960,
@@ -344,9 +409,11 @@ class _AdminChapterFormScreenState extends State<AdminChapterFormScreen> {
         TextField(
           controller: _titleController,
           textInputAction: TextInputAction.next,
-          decoration: const InputDecoration(
-            labelText: 'Topic title',
-            hintText: 'e.g. प्रस्तावना / मूलभूत हक्क / संसद',
+          decoration: InputDecoration(
+            labelText: _isTopic ? 'Topic title' : 'Chapter title',
+            hintText: _isTopic
+                ? 'e.g. Fundamental Rights / मूलभूत हक्क'
+                : 'e.g. Indian Constitution / भारतीय संविधान',
           ),
         ),
         const SizedBox(height: 14),

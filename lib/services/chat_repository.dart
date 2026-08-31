@@ -114,16 +114,21 @@ class ChatRepository {
     String uid,
     String chatId,
     String messageId,
-    String content,
-  ) async {
+    String content, {
+    List<Map<String, dynamic>>? citations,
+  }) async {
+    final data = <String, dynamic>{
+      'content': content,
+      'timestamp': DateTime.now().toIso8601String(),
+    };
+    if (citations != null) {
+      data['citations'] = citations;
+    }
     await _chatsRef(uid)
         .doc(chatId)
         .collection(messagesSubcollection)
         .doc(messageId)
-        .update({
-      'content': content,
-      'timestamp': DateTime.now().toIso8601String(),
-    });
+        .update(data);
   }
 }
 

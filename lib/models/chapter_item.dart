@@ -1,6 +1,16 @@
+import 'package:mpsc_combine_ai/models/content_index.dart';
+import 'package:mpsc_combine_ai/models/exam_item.dart';
 import 'package:mpsc_combine_ai/utils/json_list.dart';
 
 /// A chapter/topic within a subject, stored in Firestore at `chapters/{id}`.
+///
+/// The same collection holds the content-index tree:
+/// - [ContentNodeType.chapter] — grouping node under a subject
+/// - [ContentNodeType.topic] / [ContentNodeType.subtopic] — child via
+///   [parentChapterId]
+///
+/// Legacy seed rows have empty [nodeType] / [parentChapterId] and remain
+/// student-visible leaves (treated as topics).
 class ChapterItem {
   const ChapterItem({
     required this.id,
@@ -11,6 +21,9 @@ class ChapterItem {
     this.description = '',
     this.slug = '',
     this.titleEn = '',
+    this.examId = kDefaultExamId,
+    this.parentChapterId = '',
+    this.nodeType = '',
     this.published = true,
     this.tags = const [],
     this.thumbnailUrl = '',
@@ -39,6 +52,15 @@ class ChapterItem {
   final String slug;
 
   final String titleEn;
+  final String examId;
+
+  /// Parent `chapters/{id}` for topics / sub-topics. Empty = root chapter
+  /// (or a legacy leaf that students already see).
+  final String parentChapterId;
+
+  /// `chapter` | `topic` | `subtopic`. Empty = legacy leaf topic.
+  final String nodeType;
+
   final bool published;
   final List<String> tags;
   final String thumbnailUrl;
@@ -59,6 +81,32 @@ class ChapterItem {
 
   String get titleMr => title;
 
+  ContentNodeType get contentNodeType => contentNodeTypeFromString(nodeType);
+
+  /// Grouping chapter in the admin tree — hidden from the student topic list.
+  bool get isGroupingChapter =>
+      nodeType.trim().toLowerCase() == 'chapter';
+
+  /// Student-facing leaf (legacy empty type, topic, or sub-topic).
+  bool get isStudentLeaf => published && !isGroupingChapter;
+
+  /// When this row is a topic, its id is [topicId].
+  String get topicId => id;
+
+  /// Chapter/topic outline text for syllabus RAG (not the notes PDF body).
+  String get searchableText {
+    final buf = StringBuffer();
+    if (title.trim().isNotEmpty) buf.writeln(title.trim());
+    if (titleEn.trim().isNotEmpty) buf.writeln(titleEn.trim());
+    if (description.trim().isNotEmpty) buf.writeln(description.trim());
+    if (aiSummary.trim().isNotEmpty) buf.writeln(aiSummary.trim());
+    if (revisionNotes.trim().isNotEmpty) buf.writeln(revisionNotes.trim());
+    for (final tag in tags) {
+      if (tag.trim().isNotEmpty) buf.writeln(tag.trim());
+    }
+    return buf.toString();
+  }
+
   factory ChapterItem.fromMap(Map<String, dynamic> map, String id) {
     final rawTitle = map['title'] ?? map['titleMr'] ?? map['name'];
     final title = rawTitle is String ? rawTitle.trim() : '';
@@ -72,6 +120,11 @@ class ChapterItem {
       description: map['description'] as String? ?? '',
       slug: map['slug'] as String? ?? '',
       titleEn: map['titleEn'] as String? ?? '',
+      examId: (map['examId'] as String?)?.trim().isNotEmpty == true
+          ? (map['examId'] as String).trim()
+          : kDefaultExamId,
+      parentChapterId: map['parentChapterId'] as String? ?? '',
+      nodeType: map['nodeType'] as String? ?? '',
       published: asBool(map['published'], defaultValue: true),
       tags: asStringList(map['tags']),
       thumbnailUrl: map['thumbnailUrl'] as String? ?? '',
@@ -94,6 +147,9 @@ class ChapterItem {
       'estimatedStudyMinutes': estimatedStudyMinutes,
       'description': description,
       'slug': slug,
+      'examId': examId.isEmpty ? kDefaultExamId : examId,
+      'parentChapterId': parentChapterId,
+      'nodeType': nodeType,
       'published': published,
       'tags': tags,
       'thumbnailUrl': thumbnailUrl,
@@ -112,6 +168,9 @@ class ChapterItem {
     String? description,
     String? slug,
     String? titleEn,
+    String? examId,
+    String? parentChapterId,
+    String? nodeType,
     bool? published,
     List<String>? tags,
     String? thumbnailUrl,
@@ -130,6 +189,9 @@ class ChapterItem {
       description: description ?? this.description,
       slug: slug ?? this.slug,
       titleEn: titleEn ?? this.titleEn,
+      examId: examId ?? this.examId,
+      parentChapterId: parentChapterId ?? this.parentChapterId,
+      nodeType: nodeType ?? this.nodeType,
       published: published ?? this.published,
       tags: tags ?? this.tags,
       thumbnailUrl: thumbnailUrl ?? this.thumbnailUrl,

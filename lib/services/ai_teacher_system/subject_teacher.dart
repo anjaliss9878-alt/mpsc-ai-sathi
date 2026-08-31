@@ -80,6 +80,26 @@ extension MpscTeachingSubjectX on MpscTeachingSubject {
     }
   }
 
+  /// Classroom style for source-grounded RAG answers (never invents articles/dates).
+  String get groundedRagStyle {
+    switch (this) {
+      case MpscTeachingSubject.polity:
+        return 'POLITY: Constitution, Articles, institutions, and comparisons. '
+            'Cite article numbers only when they appear in retrieved chunks.';
+      case MpscTeachingSubject.history:
+        return 'HISTORY: Chronology, causes, events, personalities, consequences. '
+            'Give dates only when they appear in retrieved chunks.';
+      case MpscTeachingSubject.geography:
+        return 'GEOGRAPHY: Locations, processes, maps, cause-effect, examples.';
+      case MpscTeachingSubject.economics:
+        return 'ECONOMICS: Concept → example → impact → exam application.';
+      case MpscTeachingSubject.science:
+        return 'SCIENCE: Concept → mechanism → example → application.';
+      case MpscTeachingSubject.environment:
+        return 'ENVIRONMENT: Process → ecosystem → examples → exam relevance.';
+    }
+  }
+
   String get teacherTitleMr => '$nameMr शिक्षक';
 
   String get displayName => '$nameMr · $nameEn Teacher';
@@ -282,6 +302,14 @@ MpscTeachingSubject? tryDetectMpscTeachingSubject(
     }
   }
   return bestScore > 0 ? best : null;
+}
+
+/// Style block for RAG-grounded Gemini calls.
+String ragGroundedTeachingStyle(String query, {String? hint}) {
+  final subject = tryDetectMpscTeachingSubject(query, hint: hint);
+  return subject?.groundedRagStyle ??
+      'Match the teaching style to the retrieved source subject '
+          '(Polity / History / Geography / Economics / Science / Environment).';
 }
 
 int _score(String text, List<String> keys) {

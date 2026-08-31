@@ -2,11 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:mpsc_combine_ai/theme/app_colors.dart';
 import 'package:mpsc_combine_ai/utils/student_copy.dart';
 
-/// Silent wait UI. No stages, percentages, or backend logs.
+/// Lesson wait UI. Optional [message] is a student-facing pipeline stage.
 class DhadaProgress extends StatefulWidget {
-  const DhadaProgress({super.key, this.topic = ''});
+  const DhadaProgress({super.key, this.topic = '', this.message = ''});
 
   final String topic;
+  final String message;
 
   @override
   State<DhadaProgress> createState() => _DhadaProgressState();
@@ -73,10 +74,12 @@ class _DhadaProgressState extends State<DhadaProgress>
               ),
             ),
             const SizedBox(height: 22),
-            const Text(
-              kDhadaPreparing,
+            Text(
+              widget.message.trim().isNotEmpty
+                  ? widget.message.trim()
+                  : kDhadaPreparing,
               textAlign: TextAlign.center,
-              style: TextStyle(
+              style: const TextStyle(
                 fontWeight: FontWeight.w800,
                 fontSize: 20,
                 color: AppColors.textPrimary,

@@ -38,14 +38,56 @@ void main() {
     final spans = beatSpansFor(
       texts: const ['aaa', 'bbbbbb', 'cc'],
       total: total,
+      slideIndices: const [0, 2, 4],
     );
     expect(spans, hasLength(3));
     expect(spans.first.start, Duration.zero);
     expect(spans.last.end, total);
+    expect(spans[0].slideIndex, 0);
+    expect(spans[1].slideIndex, 2);
+    expect(spans[2].slideIndex, 4);
     for (var i = 0; i < spans.length - 1; i++) {
       expect(spans[i].end, spans[i + 1].start);
       expect(spans[i].end >= spans[i].start, isTrue);
     }
+  });
+
+  test('slideIndexForAudioSpan never treats span index as beat index', () {
+    expect(
+      slideIndexForAudioSpan(
+        spanSlideIndex: 4,
+        spanIndex: 0,
+        spanCount: 3,
+        slideCount: 5,
+      ),
+      4,
+    );
+    expect(
+      slideIndexForAudioSpan(
+        spanSlideIndex: 99,
+        spanIndex: 1,
+        spanCount: 4,
+        slideCount: 5,
+      ),
+      1,
+    );
+  });
+
+  test('withDuration preserves slide mapping', () {
+    final bundle = LessonAudioBundle(
+      bytes: Uint8List(8),
+      mimeType: 'audio/wav',
+      duration: const Duration(seconds: 10),
+      script: 'a b',
+      spans: beatSpansFor(
+        texts: const ['aaaa', 'bbbb'],
+        total: const Duration(seconds: 10),
+        slideIndices: const [1, 3],
+      ),
+    );
+    final scaled = bundle.withDuration(const Duration(seconds: 20));
+    expect(scaled.spans.map((s) => s.slideIndex).toList(), [1, 3]);
+    expect(scaled.spans.last.end, const Duration(seconds: 20));
   });
 
   test('alignment spans map each beat from character timings', () {

@@ -58,6 +58,33 @@ const List<SmartFacultyStage> kSmartFacultyPipeline = [
   SmartFacultyStage.summary,
 ];
 
+/// Strips citations, source lines, and UI/card labels so TTS reads lesson
+/// content only — never buttons, metadata, or bibliography chrome.
+String stripUnspeakableLessonText(String text) {
+  var t = stripFacultyLabelPrefixes(text);
+  if (t.isEmpty) return t;
+  t = t.replaceAll(RegExp(r'\[\d+\]'), ' ');
+  t = t.replaceAll(
+    RegExp(r'\[(?:citation|cite|ref|source)[^\]]*\]', caseSensitive: false),
+    ' ',
+  );
+  t = t.replaceAll(
+    RegExp(
+      r'\((?:source|src|pdf|p\.|page)[^)]{0,80}\)',
+      caseSensitive: false,
+    ),
+    ' ',
+  );
+  t = t.replaceAll(
+    RegExp(
+      r'(^|\n)\s*(sources?|citations?|references?|संदर्भ|स्रोत)\s*[:.\-].*$',
+      caseSensitive: false,
+    ),
+    ' ',
+  );
+  return t.replaceAll(RegExp(r'\s+'), ' ').trim();
+}
+
 /// Strips UI/card label prefixes so TTS never sounds like OCR label reading.
 String stripFacultyLabelPrefixes(String text) {
   var t = text.trim();

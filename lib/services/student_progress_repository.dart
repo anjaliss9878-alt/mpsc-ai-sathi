@@ -1,8 +1,10 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:mpsc_combine_ai/models/bookmark_item.dart';
 import 'package:mpsc_combine_ai/models/continue_session.dart';
+import 'package:mpsc_combine_ai/models/daily_study_plan.dart';
 import 'package:mpsc_combine_ai/models/study_goal.dart';
 import 'package:mpsc_combine_ai/models/study_plan.dart';
+import 'package:mpsc_combine_ai/models/syllabus_topic_record.dart';
 import 'package:mpsc_combine_ai/models/test_result.dart';
 import 'package:mpsc_combine_ai/utils/json_list.dart';
 
@@ -15,7 +17,9 @@ import 'package:mpsc_combine_ai/utils/json_list.dart';
 /// - `continueLearning/{id}`
 /// - `testAttempts/{id}`
 /// - `certificates/{id}`
-/// - `studyPlans/{yyyy-Www}`
+/// - `studyPlans/{yyyy-Www}` weekly AI timetable
+/// - `studyPlans/{yyyy-MM-dd}` personalized daily plans (`kind: daily`)
+/// - `syllabusProgress/{chapterId}` explicit topic status + history
 /// - `videoProgress/{videoId}`
 class StudentProgressRepository {
   StudentProgressRepository({FirebaseFirestore? firestore})
@@ -230,6 +234,9 @@ class StudentProgressRepository {
     String uid,
     TestResult result, {
     String? testId,
+    String kind = 'test',
+    String subjectId = '',
+    String chapterId = '',
   }) async {
     final id = '${result.dateTime.millisecondsSinceEpoch}';
     await _col(uid, 'testAttempts').doc(id).set({
@@ -244,6 +251,9 @@ class StudentProgressRepository {
       'maxScore': result.maxScore,
       'percentage': result.percentage,
       'timeTakenSeconds': result.timeTakenSeconds,
+      'kind': kind,
+      'subjectId': subjectId,
+      'chapterId': chapterId,
       'questionResults': result.questionResults
           .map(
             (q) => {
@@ -268,6 +278,15 @@ class StudentProgressRepository {
         ..sort((a, b) => b.issuedAt.compareTo(a.issuedAt));
       return list;
     });
+  }
+
+  Future<List<CertificateItem>> getCertificates(String uid) async {
+    final snap = await _col(uid, 'certificates').get();
+    final list = snap.docs
+        .map((d) => CertificateItem.fromMap(d.data(), d.id))
+        .toList()
+      ..sort((a, b) => b.issuedAt.compareTo(a.issuedAt));
+    return list;
   }
 
   Future<void> ensureChapterCertificate({
@@ -303,6 +322,319 @@ class StudentProgressRepository {
           plan.toMap(),
           SetOptions(merge: true),
         );
+  }
+
+  // ── Personalized daily plans (same studyPlans collection, date-keyed) ─
+
+  Stream<DailyStudyPlan?> watchDailyPlan(String uid, {String? dateKey}) {
+    final key = dateKey ?? DailyStudyPlan.dateKeyFor();
+    return _col(uid, 'studyPlans').doc(key).snapshots().map((snap) {
+      if (!snap.exists || snap.data() == null) return null;
+      if (!DailyStudyPlan.isDailyDoc(snap.id, snap.data())) return null;
+      return DailyStudyPlan.fromMap(snap.data()!, key);
+    });
+  }
+
+  Future<DailyStudyPlan?> getDailyPlan(String uid, {String? dateKey}) async {
+    final key = dateKey ?? DailyStudyPlan.dateKeyFor();
+    final snap = await _col(uid, 'studyPlans').doc(key).get();
+    if (!snap.exists || snap.data() == null) return null;
+    if (!DailyStudyPlan.isDailyDoc(snap.id, snap.data())) return null;
+    return DailyStudyPlan.fromMap(snap.data()!, key);
+  }
+
+  Future<void> saveDailyPlan(String uid, DailyStudyPlan plan) async {
+    await _col(uid, 'studyPlans').doc(plan.dateKey).set(
+          plan.copyWith(generatedAt: plan.generatedAt ?? DateTime.now()).toMap(),
+          SetOptions(merge: true),
+        );
+  }
+
+  Stream<List<DailyStudyPlan>> watchDailyPlans(String uid) {
+    return _col(uid, 'studyPlans').snapshots().map((snap) {
+      final list = <DailyStudyPlan>[];
+      for (final d in snap.docs) {
+        if (!DailyStudyPlan.isDailyDoc(d.id, d.data())) continue;
+        list.add(DailyStudyPlan.fromMap(d.data(), d.id));
+      }
+      list.sort((a, b) => b.dateKey.compareTo(a.dateKey));
+      return list;
+    });
+  }
+
+  Future<List<DailyStudyPlan>> getRecentDailyPlans(
+    String uid, {
+    int limit = 14,
+  }) async {
+    final snap = await _col(uid, 'studyPlans').get();
+    final list = <DailyStudyPlan>[];
+    for (final d in snap.docs) {
+      if (!DailyStudyPlan.isDailyDoc(d.id, d.data())) continue;
+      list.add(DailyStudyPlan.fromMap(d.data(), d.id));
+    }
+    list.sort((a, b) => b.dateKey.compareTo(a.dateKey));
+    if (list.length <= limit) return list;
+    return list.take(limit).toList();
+  }
+
+  Future<WeeklyPlannerProgress> weeklyProgress(
+    String uid, {
+    DateTime? now,
+  }) async {
+    final clock = now ?? DateTime.now();
+    final keys = <String>{
+      for (var i = 0; i < 7; i++)
+        DailyStudyPlan.dateKeyFor(clock.subtract(Duration(days: i))),
+    };
+    final plans = await getRecentDailyPlans(uid, limit: 21);
+    var completed = 0;
+    var total = 0;
+    var days = 0;
+    for (final plan in plans) {
+      if (!keys.contains(plan.dateKey)) continue;
+      days++;
+      total += plan.actionableCount;
+      completed += plan.completedCount;
+    }
+    return WeeklyPlannerProgress(
+      completedTasks: completed,
+      totalTasks: total,
+      daysWithPlan: days,
+    );
+  }
+
+  Future<DailyStudyPlan> setTaskStatus({
+    required String uid,
+    required String dateKey,
+    required String taskId,
+    required DailyPlanTaskStatus status,
+    String rescheduledToDateKey = '',
+  }) async {
+    final plan = await getDailyPlan(uid, dateKey: dateKey);
+    if (plan == null) {
+      throw StateError('No daily plan for $dateKey');
+    }
+    DailyPlanTask? updated;
+    for (final t in plan.tasks) {
+      if (t.id == taskId) {
+        updated = t.copyWith(
+          status: status,
+          rescheduledToDateKey: rescheduledToDateKey,
+        );
+        break;
+      }
+    }
+    if (updated == null) {
+      throw StateError('Task $taskId not found');
+    }
+    final next = plan.withTask(updated);
+    await saveDailyPlan(uid, next);
+    if (status == DailyPlanTaskStatus.completed) {
+      await markGoalTask(
+        uid: uid,
+        task: updated.goalTaskKey,
+        done: true,
+        sessionType: 'planner',
+        sessionTitle: '${updated.typeLabel}: ${updated.topic}',
+      );
+      await upsertContinueSession(
+        uid: uid,
+        id: 'planner',
+        type: 'revision',
+        title: 'Daily planner',
+        subtitle: updated.topic,
+        progress: next.progress,
+        payload: {'dateKey': dateKey, 'taskId': taskId},
+      );
+      if (updated.chapterId.isNotEmpty) {
+        await recordSyllabusStudyFromPlanner(uid: uid, task: updated);
+      }
+    }
+    return next;
+  }
+
+  /// Copies [taskId] onto [targetDateKey] as pending and marks the original
+  /// rescheduled. Creates the target day plan if needed.
+  Future<void> rescheduleTask({
+    required String uid,
+    required String fromDateKey,
+    required String taskId,
+    required String targetDateKey,
+  }) async {
+    final from = await getDailyPlan(uid, dateKey: fromDateKey);
+    if (from == null) throw StateError('No daily plan for $fromDateKey');
+    DailyPlanTask? task;
+    for (final t in from.tasks) {
+      if (t.id == taskId) {
+        task = t;
+        break;
+      }
+    }
+    if (task == null) throw StateError('Task $taskId not found');
+
+    await setTaskStatus(
+      uid: uid,
+      dateKey: fromDateKey,
+      taskId: taskId,
+      status: DailyPlanTaskStatus.rescheduled,
+      rescheduledToDateKey: targetDateKey,
+    );
+
+    var target = await getDailyPlan(uid, dateKey: targetDateKey);
+    final moved = DailyPlanTask(
+      id: '${targetDateKey}_${task.id}',
+      type: task.type,
+      subject: task.subject,
+      topic: task.topic,
+      durationMinutes: task.durationMinutes,
+      subjectId: task.subjectId,
+      chapterId: task.chapterId,
+      studyMinutes: task.studyMinutes,
+      revisionMinutes: task.revisionMinutes,
+      practiceMinutes: task.practiceMinutes,
+      reason: 'Rescheduled from $fromDateKey',
+      priority: task.priority,
+    );
+    if (target == null) {
+      target = DailyStudyPlan(
+        dateKey: targetDateKey,
+        uid: uid,
+        targetExam: from.targetExam,
+        examDate: from.examDate,
+        dailyHours: from.dailyHours,
+        tasks: [moved],
+        adaptationNotes: const ['Rescheduled from a previous day.'],
+        generatedAt: DateTime.now(),
+      );
+    } else {
+      target = target.copyWith(tasks: [...target.tasks, moved]);
+    }
+    await saveDailyPlan(uid, target);
+  }
+
+  // ── Syllabus topic progress (`students/{uid}/syllabusProgress`) ────────
+
+  static const String syllabusProgressCollection = 'syllabusProgress';
+
+  CollectionReference<Map<String, dynamic>> _syllabusCol(String uid) =>
+      _col(uid, syllabusProgressCollection);
+
+  Stream<List<SyllabusTopicRecord>> watchSyllabusRecords(String uid) {
+    return _syllabusCol(uid).snapshots().map((snap) {
+      return snap.docs
+          .map((d) => SyllabusTopicRecord.fromMap(d.data(), d.id))
+          .toList();
+    });
+  }
+
+  Future<List<SyllabusTopicRecord>> getSyllabusRecords(String uid) async {
+    final snap = await _syllabusCol(uid).get();
+    return snap.docs
+        .map((d) => SyllabusTopicRecord.fromMap(d.data(), d.id))
+        .toList();
+  }
+
+  Future<SyllabusTopicRecord?> getSyllabusRecord(
+    String uid,
+    String chapterId,
+  ) async {
+    if (chapterId.isEmpty) return null;
+    final snap = await _syllabusCol(uid).doc(chapterId).get();
+    if (!snap.exists || snap.data() == null) return null;
+    return SyllabusTopicRecord.fromMap(snap.data()!, snap.id);
+  }
+
+  Future<void> upsertSyllabusRecord({
+    required String uid,
+    required String chapterId,
+    required String subjectId,
+    required SyllabusTopicStatus status,
+    String source = 'manual',
+    int extraStudyMinutes = 0,
+    bool incrementRevision = false,
+  }) async {
+    if (chapterId.isEmpty) return;
+    final existing = await getSyllabusRecord(uid, chapterId);
+    final now = DateTime.now();
+    final history = [
+      ...(existing?.history ?? const <SyllabusStatusEvent>[]),
+      SyllabusStatusEvent(status: status, at: now, source: source),
+    ];
+    final trimmed = history.length <= 30
+        ? history
+        : history.sublist(history.length - 30);
+    final completedAt = status == SyllabusTopicStatus.completed
+        ? (existing?.completedAt ?? now)
+        : null;
+    final next = SyllabusTopicRecord(
+      chapterId: chapterId,
+      subjectId: subjectId,
+      status: status,
+      studyMinutes: (existing?.studyMinutes ?? 0) + extraStudyMinutes,
+      revisionCount: (existing?.revisionCount ?? 0) + (incrementRevision ? 1 : 0),
+      completedAt: completedAt,
+      lastStudiedAt: now,
+      history: trimmed,
+    );
+    await _syllabusCol(uid).doc(chapterId).set(
+          next.toMap(),
+          SetOptions(merge: true),
+        );
+  }
+
+  /// Planner study/revision completion updates syllabus without looping
+  /// back into planner task completion.
+  Future<void> recordSyllabusStudyFromPlanner({
+    required String uid,
+    required DailyPlanTask task,
+  }) async {
+    if (task.chapterId.isEmpty) return;
+    final existing = await getSyllabusRecord(uid, task.chapterId);
+    final alreadyDone = existing?.status == SyllabusTopicStatus.completed;
+    final nextStatus = alreadyDone
+        ? SyllabusTopicStatus.completed
+        : SyllabusTopicStatus.inProgress;
+    await upsertSyllabusRecord(
+      uid: uid,
+      chapterId: task.chapterId,
+      subjectId: task.subjectId,
+      status: nextStatus,
+      source: 'planner',
+      extraStudyMinutes: task.durationMinutes,
+      incrementRevision: task.type == DailyPlanTaskType.revision,
+    );
+  }
+
+  /// Marks today's open planner tasks for [chapterId] complete. Does not
+  /// re-enter [setTaskStatus] (avoids a planner ↔ syllabus loop).
+  Future<int> completeOpenPlannerTasksForChapter({
+    required String uid,
+    required String chapterId,
+    String? dateKey,
+  }) async {
+    if (chapterId.isEmpty) return 0;
+    final key = dateKey ?? DailyStudyPlan.dateKeyFor();
+    final plan = await getDailyPlan(uid, dateKey: key);
+    if (plan == null) return 0;
+    var count = 0;
+    var next = plan;
+    for (final task in plan.tasks) {
+      if (task.chapterId != chapterId || !task.isOpen) continue;
+      next = next.withTask(
+        task.copyWith(status: DailyPlanTaskStatus.completed),
+      );
+      count++;
+    }
+    if (count == 0) return 0;
+    await saveDailyPlan(uid, next);
+    await markGoalTask(
+      uid: uid,
+      task: 'notes',
+      done: true,
+      sessionType: 'syllabus',
+      sessionTitle: 'Topic complete',
+    );
+    return count;
   }
 
   // ── Video progress ────────────────────────────────────────────────────
@@ -376,6 +708,9 @@ class PersistedTestAttempt {
     required this.percentage,
     required this.timeTakenSeconds,
     this.testId = '',
+    this.kind = 'test',
+    this.subjectId = '',
+    this.chapterId = '',
     this.questionResults = const [],
   });
 
@@ -391,6 +726,9 @@ class PersistedTestAttempt {
   final double maxScore;
   final double percentage;
   final int timeTakenSeconds;
+  final String kind;
+  final String subjectId;
+  final String chapterId;
   final List<QuestionResult> questionResults;
 
   factory PersistedTestAttempt.fromMap(Map<String, dynamic> map, String id) {
@@ -408,6 +746,9 @@ class PersistedTestAttempt {
       maxScore: (map['maxScore'] as num?)?.toDouble() ?? 0,
       percentage: (map['percentage'] as num?)?.toDouble() ?? 0,
       timeTakenSeconds: (map['timeTakenSeconds'] as num?)?.toInt() ?? 0,
+      kind: map['kind'] as String? ?? _kindFromTitle(map['testTitle'] as String?),
+      subjectId: map['subjectId'] as String? ?? '',
+      chapterId: map['chapterId'] as String? ?? '',
       questionResults: asMapList(map['questionResults']).map((m) {
         return QuestionResult(
           question: m['question'] as String? ?? '',
@@ -433,6 +774,13 @@ class PersistedTestAttempt {
         timeTakenSeconds: timeTakenSeconds,
         questionResults: questionResults,
       );
+}
+
+String _kindFromTitle(String? title) {
+  final hay = (title ?? '').toLowerCase();
+  if (hay.contains('pyq') || hay.contains('previous year')) return 'pyq';
+  if (hay.contains('mcq') || hay.contains('practice')) return 'mcq';
+  return 'test';
 }
 
 class CertificateItem {

@@ -70,6 +70,9 @@ class AiLessonRepository {
     String chapterId = '',
     String subjectId = '',
     String subjectTitle = '',
+    String examId = '',
+    String targetGroup = '',
+    String topicId = '',
     bool forceRegenerate = false,
   }) async {
     final id = docIdFor(uid: uid, topic: topic);
@@ -84,6 +87,9 @@ class AiLessonRepository {
       'chapterId': chapterId,
       'subjectId': subjectId,
       'subjectTitle': subjectTitle,
+      if (examId.isNotEmpty) 'examId': examId,
+      if (targetGroup.isNotEmpty) 'targetGroup': targetGroup,
+      if (topicId.isNotEmpty) 'topicId': topicId,
       'status': AiLessonStatus.queued.wire,
       'stage': AiLessonStage.preparing.wire,
       'progress': 0,
@@ -91,6 +97,7 @@ class AiLessonRepository {
       'pdfPath': existing?.pdfPath ?? '',
       'audioUrl': forceRegenerate ? '' : (existing?.audioUrl ?? ''),
       'videoUrl': forceRegenerate ? '' : (existing?.videoUrl ?? ''),
+      'finalVideoUrl': forceRegenerate ? '' : (existing?.finalVideoUrl ?? ''),
       'thumbnailUrl': forceRegenerate ? '' : (existing?.thumbnailUrl ?? ''),
       'duration': existing?.duration ?? 0,
       'errorMessage': '',
@@ -151,7 +158,16 @@ class AiLessonRepository {
     required String thumbnailUrl,
     required double duration,
     required AiLessonPlayback playbackMode,
+    String finalVideoUrl = '',
   }) async {
+    final audio = audioUrl.trim();
+    final video = videoUrl.trim();
+    final finalUrl = finalVideoUrl.trim().isNotEmpty ? finalVideoUrl.trim() : video;
+    if (audio.isEmpty || video.isEmpty) {
+      throw StateError(
+        'Cannot mark lesson ready without slides audio and final video',
+      );
+    }
     await doc(id).set({
       'status': AiLessonStatus.ready.wire,
       'stage': AiLessonStage.ready.wire,
@@ -159,12 +175,13 @@ class AiLessonRepository {
       'etaSeconds': 0,
       'script': lesson.script,
       'lesson': lesson.toMap(),
-      'audioUrl': audioUrl,
-      'videoUrl': videoUrl,
+      'audioUrl': audio,
+      'videoUrl': video,
+      'finalVideoUrl': finalUrl,
       'thumbnailUrl': thumbnailUrl,
       'duration': duration,
       'playbackMode': playbackMode.wire,
-      'friendlyMessage': 'Ready to watch',
+      'friendlyMessage': 'Ready to play',
       'errorMessage': '',
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
@@ -175,10 +192,12 @@ class AiLessonRepository {
   Future<void> attachVideo({
     required String id,
     required String videoUrl,
+    String finalVideoUrl = '',
   }) async {
     if (videoUrl.trim().isEmpty) return;
     await doc(id).set({
       'videoUrl': videoUrl.trim(),
+      if (finalVideoUrl.trim().isNotEmpty) 'finalVideoUrl': finalVideoUrl.trim(),
       'playbackMode': AiLessonPlayback.video.wire,
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));

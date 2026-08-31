@@ -25,7 +25,7 @@ void main() {
     expect(msg.toLowerCase().contains('typeerror'), isFalse);
     expect(msg.toLowerCase().contains('firebase'), isFalse);
     expect(msg.toLowerCase().contains('http'), isFalse);
-    expect(msg, contains('try again'));
+    expect(msg, contains('पुन्हा प्रयत्न'));
   });
 
   test('youtubeVideoId parses watch and short links', () {

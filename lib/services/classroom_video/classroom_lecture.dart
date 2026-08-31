@@ -7,11 +7,15 @@ class ClassroomSlide {
     required this.heading,
     required this.points,
     required this.spoken,
+    this.durationSeconds,
   });
 
   final String heading;
   final List<String> points;
   final String spoken;
+  /// Shared audio-timeline hold for this slide, when the client already
+  /// generated TTS. Null → derive from spoken length.
+  final double? durationSeconds;
 
   factory ClassroomSlide.fromMap(Map<String, dynamic> map) {
     final spoken = speakableMarathi(
@@ -27,10 +31,13 @@ class ClassroomSlide {
         .where((s) => s.isNotEmpty)
         .take(5)
         .toList();
+    final raw = map['durationSeconds'] ?? map['duration'];
+    final seconds = raw is num ? raw.toDouble() : double.tryParse('$raw');
     return ClassroomSlide(
       heading: heading,
       points: points,
       spoken: spoken,
+      durationSeconds: seconds != null && seconds > 0 ? seconds : null,
     );
   }
 }
@@ -73,14 +80,27 @@ class ClassroomLecture {
   }
 
   /// Character-weighted slide durations that sum to [total].
+  ///
+  /// When every slide carries [ClassroomSlide.durationSeconds] from the
+  /// generated TTS timeline, those holds are used (rescaled to [total]).
   List<Duration> slideDurations(Duration total) {
     if (slides.isEmpty) return const [];
+    final ms = total.inMilliseconds < 1000 ? 1000 : total.inMilliseconds;
+    final explicit = [
+      for (final s in slides)
+        if (s.durationSeconds != null && s.durationSeconds! > 0)
+          Duration(
+            milliseconds: (s.durationSeconds! * 1000).round().clamp(400, ms),
+          ),
+    ];
+    if (explicit.length == slides.length) {
+      return _scaleDurations(explicit, ms);
+    }
     final weights = [
       for (final s in slides)
         s.spoken.trim().isEmpty ? s.heading.length.clamp(1, 80) : s.spoken.length,
     ];
     final sum = weights.fold<int>(0, (a, b) => a + b);
-    final ms = total.inMilliseconds < 1000 ? 1000 : total.inMilliseconds;
     if (sum <= 0) {
       final each = (ms / slides.length).floor();
       return [for (var i = 0; i < slides.length; i++) Duration(milliseconds: each)];
@@ -98,6 +118,27 @@ class ClassroomLecture {
     }
     return out;
   }
+}
+
+List<Duration> _scaleDurations(List<Duration> parts, int totalMs) {
+  final sum = parts.fold<int>(0, (a, b) => a + b.inMilliseconds);
+  if (sum <= 0) {
+    final each = (totalMs / parts.length).floor().clamp(400, totalMs);
+    return [for (var i = 0; i < parts.length; i++) Duration(milliseconds: each)];
+  }
+  if ((sum - totalMs).abs() < 250) return parts;
+  final out = <Duration>[];
+  var used = 0;
+  for (var i = 0; i < parts.length; i++) {
+    if (i == parts.length - 1) {
+      out.add(Duration(milliseconds: (totalMs - used).clamp(400, totalMs)));
+      break;
+    }
+    final part = ((totalMs * parts[i].inMilliseconds) / sum).round().clamp(400, totalMs);
+    used += part;
+    out.add(Duration(milliseconds: part));
+  }
+  return out;
 }
 
 String stripJsonFences(String text) {

@@ -3,11 +3,14 @@ rules_version = '2';
 // MPSC COMBINE AI — Firestore security rules.
 //
 // Every student's own data (profile + AI Teacher chat history) lives under
-// students/{uid}, keyed by their Firebase Auth UID. A signed-in user may
-// only read/write their own subtree — never another student's.
+// students/{uid}, keyed by their Firebase Auth UID. A signed-in student may
+// only read/write their own subtree — never another student's. Admins may
+// *read* analytics subcollections (plans, attempts, syllabus, weakness
+// inputs) and write the profile document (block / assign courses). Admins
+// cannot write a student's progress/plan/test documents.
 //
 // Content collections (subjects/chapters/notes/mcqs/pyqs/tests/
-// currentAffairs/videos/liveClasses) are readable by any signed-in student
+// currentAffairs/jobAlerts/videos/liveClasses) are readable by any signed-in student
 // (Admin Panel + Student App share the same top-level collections — there is
 // no separate student copy). Writes are admin-only (`admin/{uid}` or legacy
 // `admins/{uid}`). Draft vs published visibility is enforced in the app
@@ -21,30 +24,63 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      // App allow-list lives at `admin/{uid}` (singular). Older docs/rules
-      // used `admins` (plural) — accept either so production setups of both
-      // shapes keep working.
+      // Canonical allow-list is `admin/{uid}` (singular), matching
+      // AdminRepository.collection. Also accept legacy `admins/{uid}`.
       return isSignedIn() && (
         exists(/databases/$(database)/documents/admin/$(request.auth.uid)) ||
         exists(/databases/$(database)/documents/admins/$(request.auth.uid))
       );
     }
 
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Student-visible RAG is published + Ready only. Draft / Under Review /
+    // Approved / Unpublished use published == false. Processing / Failed /
+    // Uploading use status != 'Ready'. Rules (not only the app) enforce this.
+    function isStudentReadableRagSource() {
+      return isSignedIn()
+        && resource.data.published == true
+        && resource.data.status == 'Ready';
+    }
+
+    function ragSourcePath(sourceId) {
+      return /databases/$(database)/documents/ragSources/$(sourceId);
+    }
+
+    function isStudentReadableRagChunk() {
+      return isSignedIn()
+        && resource.data.published == true
+        && resource.data.sourceId is string
+        && resource.data.sourceId.size() > 0
+        && exists(ragSourcePath(resource.data.sourceId))
+        && get(ragSourcePath(resource.data.sourceId)).data.published == true
+        && get(ragSourcePath(resource.data.sourceId)).data.status == 'Ready';
+    }
+
     match /students/{uid} {
-      allow read, write: if isSignedIn() && request.auth.uid == uid;
+      // Owner: full access to their profile. Admin: read all profiles
+      // (Student Management list) and write block/course-assignment fields.
+      // Students still cannot read or write another student's document.
+      allow read: if isOwner(uid) || isAdmin();
+      allow write: if isOwner(uid) || isAdmin();
 
       match /chats/{chatId} {
-        allow read, write: if isSignedIn() && request.auth.uid == uid;
+        allow read: if isOwner(uid) || isAdmin();
+        allow write: if isOwner(uid);
 
         match /messages/{messageId} {
-          allow read, write: if isSignedIn() && request.auth.uid == uid;
+          allow read: if isOwner(uid) || isAdmin();
+          allow write: if isOwner(uid);
         }
       }
 
       // AI Teacher Classroom lesson history — one document per generated
       // lesson (question, script, slides, mcqs, notes, timestamp).
       match /aiLessons/{lessonId} {
-        allow read, write: if isSignedIn() && request.auth.uid == uid;
+        allow read: if isOwner(uid) || isAdmin();
+        allow write: if isOwner(uid);
       }
 
       // Per-student notification inbox, fanned out by the Admin Panel when
@@ -52,35 +88,58 @@ service cloud.firestore {
       // may read and mark-as-read their own inbox; only an admin may add
       // new entries or remove them.
       match /inbox/{notificationId} {
-        allow read: if isSignedIn() && request.auth.uid == uid;
+        allow read: if isOwner(uid) || isAdmin();
         allow create, delete: if isAdmin();
-        allow update: if isSignedIn() && request.auth.uid == uid;
+        allow update: if isOwner(uid);
       }
 
       match /dailyGoals/{goalId} {
-        allow read, write: if isSignedIn() && request.auth.uid == uid;
+        allow read: if isOwner(uid) || isAdmin();
+        allow write: if isOwner(uid);
       }
       match /continueLearning/{sessionId} {
-        allow read, write: if isSignedIn() && request.auth.uid == uid;
+        allow read: if isOwner(uid) || isAdmin();
+        allow write: if isOwner(uid);
       }
       match /classroomProgress/{chapterId} {
-        allow read, write: if isSignedIn() && request.auth.uid == uid;
+        allow read: if isOwner(uid) || isAdmin();
+        allow write: if isOwner(uid);
       }
       match /bookmarks/{bookmarkId} {
-        allow read, write: if isSignedIn() && request.auth.uid == uid;
+        allow read: if isOwner(uid) || isAdmin();
+        allow write: if isOwner(uid);
       }
       match /testAttempts/{attemptId} {
-        allow read, write: if isSignedIn() && request.auth.uid == uid;
+        allow read: if isOwner(uid) || isAdmin();
+        allow write: if isOwner(uid);
       }
       match /certificates/{certId} {
-        allow read, write: if isSignedIn() && request.auth.uid == uid;
+        allow read: if isOwner(uid) || isAdmin();
+        allow write: if isOwner(uid);
       }
       match /studyPlans/{planId} {
-        allow read, write: if isSignedIn() && request.auth.uid == uid;
+        allow read: if isOwner(uid) || isAdmin();
+        allow write: if isOwner(uid);
+      }
+      match /syllabusProgress/{topicId} {
+        allow read: if isOwner(uid) || isAdmin();
+        allow write: if isOwner(uid);
+      }
+      match /ragEvents/{eventId} {
+        allow read: if isOwner(uid) || isAdmin();
+        allow create: if isOwner(uid);
+        allow update, delete: if isOwner(uid);
       }
       match /videoProgress/{videoId} {
-        allow read, write: if isSignedIn() && request.auth.uid == uid;
+        allow read: if isOwner(uid) || isAdmin();
+        allow write: if isOwner(uid);
       }
+    }
+
+    // Admin Dashboard AI Teacher usage (collectionGroup('aiLessons')).
+    // Students cannot list every student's lessons this way.
+    match /{path=**}/aiLessons/{lessonId} {
+      allow read: if isAdmin();
     }
 
     // Admin allow-list: a user may check ONLY their own admin status.
@@ -94,6 +153,14 @@ service cloud.firestore {
     match /admins/{uid} {
       allow read: if isSignedIn() && request.auth.uid == uid;
       allow write: if false;
+    }
+
+    // Required for Admin Notes Content Index (`getExamsOnce` / `ensureDefaultExam`).
+    // If this match is missing in the deployed rules, listing `exams` returns
+    // permission-denied while `subjects` / `chapters` / `notes` still load.
+    match /exams/{examId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
     }
 
     match /subjects/{subjectId} {
@@ -121,12 +188,29 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    match /flashcards/{cardId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /smartTricks/{trickId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
     match /tests/{testId} {
       allow read: if isSignedIn();
       allow write: if isAdmin();
     }
 
     match /currentAffairs/{itemId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Admin-authored job / exam alerts. Signed-in students may read
+    // (the app shows only published docs). Writes are admin-only.
+    match /jobAlerts/{alertId} {
       allow read: if isSignedIn();
       allow write: if isAdmin();
     }
@@ -185,6 +269,20 @@ service cloud.firestore {
       allow read: if isSignedIn();
       allow create, update: if isSignedIn();
       allow delete: if isAdmin();
+    }
+
+    // RAG knowledge sources + chunks. Students may read ONLY published +
+    // Ready rows. Chunks are readable only when they are published AND their
+    // parent source is published + Ready. Admins may read/write every status
+    // (Draft, Under Review, Processing, Failed, Unpublished).
+    match /ragSources/{sourceId} {
+      allow read: if isAdmin() || isStudentReadableRagSource();
+      allow write: if isAdmin();
+    }
+
+    match /ragChunks/{chunkId} {
+      allow read: if isAdmin() || isStudentReadableRagChunk();
+      allow write: if isAdmin();
     }
 
     // Notification "send" records (history shown in the Admin Panel). The

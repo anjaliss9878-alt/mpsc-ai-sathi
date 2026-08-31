@@ -8,6 +8,7 @@ import 'package:mpsc_combine_ai/services/ai_teacher_system/lesson_generation_ser
 import 'package:mpsc_combine_ai/services/ai_teacher_system/lecture_lesson_sanitizer.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/subject_teacher.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/teaching_sequence.dart';
+import 'package:mpsc_combine_ai/services/personalized_multi_rag_service.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/verified_content_retrieval.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/video_lesson_cache_service.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/video_lesson_job_status.dart';
@@ -156,6 +157,7 @@ class VideoGenerationPipeline {
     bool forceRegenerate = false,
     bool topicOnly = true,
     bool skipQualityRetry = true,
+    String studentUid = '',
   }) async {
     final trimmed = topic.trim();
     if (trimmed.isEmpty) {
@@ -243,6 +245,20 @@ class VideoGenerationPipeline {
           topic: trimmed,
           subjectHint: subjectContext,
         );
+        if (verified != null && studentUid.isNotEmpty) {
+          final extra = await personalizedMultiRagService.lessonNotesSnippet(
+            uid: studentUid,
+            requesterUid: studentUid,
+            topic: trimmed,
+            subjectId: verified.chapter.subjectId,
+            chapterId: verified.chapter.id,
+          );
+          if (extra.isNotEmpty) {
+            verified = verified.copyWith(
+              notesText: '${verified.notesText}\n\n$extra',
+            );
+          }
+        }
       }
 
       late GeneratedLesson lesson;

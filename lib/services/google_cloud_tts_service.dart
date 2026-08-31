@@ -100,7 +100,7 @@ class GoogleCloudTtsService {
   ];
 
   /// Gentle classroom pace (~0.85–0.95). Player may still adjust speed.
-  static const double defaultSpeakingRate = 0.95;
+  static const double defaultSpeakingRate = 0.9;
 
   /// Cloud TTS input limit is ~5000 bytes; stay under with UTF-8 Marathi.
   static const int maxChunkChars = 4200;

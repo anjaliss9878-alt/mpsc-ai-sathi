@@ -1,11 +1,19 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:mpsc_combine_ai/models/chat_message.dart';
-import 'package:mpsc_combine_ai/services/ai_teacher_service.dart';
+import 'package:mpsc_combine_ai/models/rag_source.dart';
+import 'package:mpsc_combine_ai/rag/rag_exceptions.dart';
+import 'package:mpsc_combine_ai/rag/rag_source_filter.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/generated_lesson.dart';
+import 'package:mpsc_combine_ai/services/personalized_multi_rag_service.dart';
+import 'package:mpsc_combine_ai/services/rag_source_repository.dart';
 import 'package:mpsc_combine_ai/theme/app_colors.dart';
+import 'package:mpsc_combine_ai/widgets/rag_citation_block.dart';
+import 'package:mpsc_combine_ai/widgets/rag_source_picker.dart';
 
-/// Follow-up doubts for the current AI lesson. Uses the existing chat service
-/// with the generated notes as grounding context.
+/// Follow-up doubts for the current AI lesson. Uses the same RAG pipeline as
+/// AI Teacher: retrieve published chunks → Gemini → grounded answer + citations.
 class LessonAskAiPanel extends StatefulWidget {
   const LessonAskAiPanel({super.key, required this.lesson});
 
@@ -19,16 +27,25 @@ class _LessonAskAiPanelState extends State<LessonAskAiPanel> {
   final _controller = TextEditingController();
   final _messages = <ChatMessage>[];
   bool _busy = false;
+  RagSourceFilter _filter = RagSourceFilter.allPublished;
+  List<RagSource> _sources = const [];
+  StreamSubscription<List<RagSource>>? _sourcesSub;
 
   @override
   void initState() {
     super.initState();
+    _filter = RagSourceFilter.forSubject(subject: widget.lesson.subjectName);
+    _sourcesSub = ragSourceRepository.watchPublishedReady().listen((sources) {
+      if (!mounted) return;
+      setState(() => _sources = sources);
+    });
     _messages.add(
       ChatMessage(
         role: ChatRole.assistant,
         content:
             'या धड्याबाबत शंका विचारा — ${widget.lesson.topicName}. '
-            'मी ${widget.lesson.subjectName} शिक्षक आहे.',
+            'मी ${widget.lesson.subjectName} शिक्षक आहे. उत्तरे प्रकाशित MPSC '
+            'स्रोतांवर आधारित असतील.',
         timestamp: DateTime.now(),
       ),
     );
@@ -36,21 +53,9 @@ class _LessonAskAiPanelState extends State<LessonAskAiPanel> {
 
   @override
   void dispose() {
+    _sourcesSub?.cancel();
     _controller.dispose();
     super.dispose();
-  }
-
-  String get _context {
-    final notes = widget.lesson.notes.take(12).join('\n- ');
-    final summary = widget.lesson.summary.trim();
-    return 'CURRENT LESSON ONLY.\n'
-        'Topic: ${widget.lesson.topicName}\n'
-        'Subject: ${widget.lesson.subjectName}\n'
-        '${summary.isEmpty ? '' : 'Summary: $summary\n'}'
-        'Notes:\n- $notes\n\n'
-        'Answer in Marathi. Stay on this topic. '
-        'If the student asks something unrelated to "${widget.lesson.topicName}", '
-        'politely refuse and ask them to question this lesson only.';
   }
 
   Future<void> _send() async {
@@ -68,20 +73,26 @@ class _LessonAskAiPanelState extends State<LessonAskAiPanel> {
       );
     });
     try {
-      final reply = await aiTeacherService.sendMessage(
-        history: _messages.length > 1
-            ? _messages.sublist(0, _messages.length - 1)
-            : const [],
-        userMessage: text,
-        extraContext: _context,
+      final history = _messages.length > 1
+          ? _messages.sublist(0, _messages.length - 1)
+          : const <ChatMessage>[];
+      final reply = await answerWithStudentRag(
+        question: '${widget.lesson.topicName}. $text',
+        history: history,
+        filter: _filter,
+        subjectHint: widget.lesson.subjectName,
+        fromAiTeacher: true,
+        chapterId: widget.lesson.chapterId,
+        subjectId: widget.lesson.subjectId,
       );
       if (!mounted) return;
       setState(() {
         _messages.add(
           ChatMessage(
             role: ChatRole.assistant,
-            content: reply,
+            content: reply.markdown,
             timestamp: DateTime.now(),
+            citations: reply.citations,
           ),
         );
         _busy = false;
@@ -92,7 +103,9 @@ class _LessonAskAiPanelState extends State<LessonAskAiPanel> {
         _messages.add(
           ChatMessage(
             role: ChatRole.assistant,
-            content: 'उत्तर मिळाले नाही. कृपया पुन्हा प्रयत्न करा.',
+            content: e is RagException
+                ? e.message
+                : 'उत्तर मिळाले नाही. कृपया पुन्हा प्रयत्न करा.',
             timestamp: DateTime.now(),
           ),
         );
@@ -105,6 +118,22 @@ class _LessonAskAiPanelState extends State<LessonAskAiPanel> {
   Widget build(BuildContext context) {
     return Column(
       children: [
+        ExpansionTile(
+          title: const Text(
+            '📚 Sources',
+            style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+          ),
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: RagSourcePicker(
+                sources: _sources,
+                filter: _filter,
+                onChanged: (next) => setState(() => _filter = next),
+              ),
+            ),
+          ],
+        ),
         Expanded(
           child: ListView.builder(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
@@ -121,14 +150,23 @@ class _LessonAskAiPanelState extends State<LessonAskAiPanel> {
                   decoration: BoxDecoration(
                     color: mine ? AppColors.navy : Colors.white,
                     borderRadius: BorderRadius.circular(14),
-                    border: mine ? null : Border.all(color: AppColors.navy.withValues(alpha: 0.08)),
+                    border: mine
+                        ? null
+                        : Border.all(color: AppColors.navy.withValues(alpha: 0.08)),
                   ),
-                  child: Text(
-                    m.content,
-                    style: TextStyle(
-                      color: mine ? Colors.white : AppColors.textPrimary,
-                      height: 1.45,
-                    ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        m.content,
+                        style: TextStyle(
+                          color: mine ? Colors.white : AppColors.textPrimary,
+                          height: 1.45,
+                        ),
+                      ),
+                      if (!mine && m.citations.isNotEmpty)
+                        RagCitationBlock(citations: m.citations),
+                    ],
                   ),
                 ),
               );
@@ -159,7 +197,10 @@ class _LessonAskAiPanelState extends State<LessonAskAiPanel> {
                     ? const SizedBox(
                         width: 18,
                         height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
                       )
                     : const Icon(Icons.send_rounded),
               ),

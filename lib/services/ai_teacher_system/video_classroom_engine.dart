@@ -85,6 +85,7 @@ class VideoClassroomEngine extends ChangeNotifier {
 
   int _slideIndex = 0;
   int _beatIndex = 0;
+  int _spanIndex = 0;
   int _revealCount = 1;
   int? _activeBulletIndex;
   bool _zoomPulse = false;
@@ -110,8 +111,9 @@ class VideoClassroomEngine extends ChangeNotifier {
   GeneratedLesson get lesson => _lesson;
   List<TeachingBeat> get beats => _ensureBeats();
   int get slideIndex => _slideIndex;
-  int get beatIndex => _beatIndex;
-  int get segmentIndex => _beatIndex;
+  int get beatIndex =>
+      _lessonAudio != null ? _spanIndex : _beatIndex;
+  int get segmentIndex => beatIndex;
   int get revealCount => _revealCount;
   int? get activeBulletIndex => _activeBulletIndex;
   bool get zoomPulse => _zoomPulse;
@@ -135,14 +137,16 @@ class VideoClassroomEngine extends ChangeNotifier {
   bool get hasContinuousAudio => _lessonAudio != null;
 
   List<String> get currentKeywords {
-    final b = beats;
-    if (_beatIndex >= 0 && _beatIndex < b.length) {
-      final k = b[_beatIndex].keywords;
+    if (_lesson.slides.isNotEmpty) {
+      final i = _slideIndex.clamp(0, _lesson.slides.length - 1);
+      final k = _lesson.slides[i].keywords;
       if (k.isNotEmpty) return k;
     }
-    if (_lesson.slides.isEmpty) return const [];
-    final i = _slideIndex.clamp(0, _lesson.slides.length - 1);
-    return _lesson.slides[i].keywords;
+    final b = beats;
+    if (_beatIndex >= 0 && _beatIndex < b.length) {
+      return b[_beatIndex].keywords;
+    }
+    return const [];
   }
 
   List<SubtitleCue> get currentSubtitleCues {
@@ -192,6 +196,7 @@ class VideoClassroomEngine extends ChangeNotifier {
     _activeBulletIndex = null;
     _speechProgress = 0;
     _pointerStep = 0;
+    _spanIndex = 0;
     _premiumSpotlight = PremiumSpotlight.none;
     _premiumSpotlightText = '';
     if (beats.isNotEmpty) {
@@ -211,6 +216,10 @@ class VideoClassroomEngine extends ChangeNotifier {
     if (_disposed) return;
     if (actual > Duration.zero) next = next.withDuration(actual);
     _lessonAudio = next;
+    _spanIndex = 0;
+    if (next.spans.isNotEmpty) {
+      _applySpanVisuals(0, notify: false);
+    }
     notifyListeners();
   }
 
@@ -226,13 +235,16 @@ class VideoClassroomEngine extends ChangeNotifier {
 
   void play() {
     if (_disposed) return;
-    final b = beats;
-    if (b.isEmpty) return;
     if (_lessonAudio != null) {
-      if (_beatIndex >= b.length) _beatIndex = 0;
-      _startContinuous(from: _spanStart(_beatIndex));
+      final spans = _lessonAudio!.spans;
+      if (_spanIndex >= spans.length) _spanIndex = 0;
+      _audio.releasePauseGate();
+      _isPaused = false;
+      _startContinuous(from: _spanStart(_spanIndex));
       return;
     }
+    final b = beats;
+    if (b.isEmpty) return;
     _isPlaying = false;
     _isPaused = false;
     _caption =
@@ -252,10 +264,15 @@ class VideoClassroomEngine extends ChangeNotifier {
   void resume() {
     if (_disposed) return;
     if (_lessonAudio != null && _isPaused) {
-      unawaited(_audio.resume());
-      _isPlaying = true;
       _isPaused = false;
+      _isPlaying = true;
       notifyListeners();
+      if (_audio.isPaused || _audio.pauseRequested) {
+        unawaited(_audio.resume());
+      } else {
+        _audio.releasePauseGate();
+        _startContinuous(from: _audio.position);
+      }
       return;
     }
     if (_isPaused && (_audio.isPaused || _audio.isLoading)) {
@@ -282,6 +299,9 @@ class VideoClassroomEngine extends ChangeNotifier {
     _isPaused = false;
     _zoomPulse = false;
     _speechProgress = 0;
+    if (_lessonAudio != null && _lessonAudio!.spans.isNotEmpty) {
+      _applySpanVisuals(0, notify: false);
+    }
     notifyListeners();
   }
 
@@ -294,6 +314,17 @@ class VideoClassroomEngine extends ChangeNotifier {
   }
 
   void next() {
+    if (_lessonAudio != null) {
+      final spans = _lessonAudio!.spans;
+      if (spans.isEmpty) return;
+      final n = (_spanIndex + 1).clamp(0, spans.length - 1);
+      if (n == _spanIndex && _spanIndex >= spans.length - 1) {
+        stop();
+        return;
+      }
+      jumpToSpan(n, autoPlay: true);
+      return;
+    }
     final b = beats;
     if (b.isEmpty) return;
     final n = (_beatIndex + 1).clamp(0, b.length - 1);
@@ -305,6 +336,13 @@ class VideoClassroomEngine extends ChangeNotifier {
   }
 
   void previous() {
+    if (_lessonAudio != null) {
+      final spans = _lessonAudio!.spans;
+      if (spans.isEmpty) return;
+      final p = (_spanIndex - 1).clamp(0, spans.length - 1);
+      jumpToSpan(p, autoPlay: _isPlaying || _isPaused);
+      return;
+    }
     final b = beats;
     if (b.isEmpty) return;
     final p = (_beatIndex - 1).clamp(0, b.length - 1);
@@ -313,17 +351,23 @@ class VideoClassroomEngine extends ChangeNotifier {
 
   void replay() {
     _beatIndex = 0;
+    _spanIndex = 0;
     _slideIndex = 0;
     _revealCount = 1;
     _isPaused = false;
     _speechProgress = 0;
     _activeBulletIndex = null;
+    _audio.releasePauseGate();
     notifyListeners();
     play();
   }
 
   /// Re-explain the current scene from its first beat (Explain Again).
   void explainAgain() {
+    if (_lessonAudio != null) {
+      jumpToSlide(_slideIndex, autoPlay: true);
+      return;
+    }
     final b = beats;
     if (b.isEmpty) {
       replay();
@@ -407,25 +451,32 @@ class VideoClassroomEngine extends ChangeNotifier {
   }
 
   void jumpToBeat(int beatIndex, {required bool autoPlay}) {
+    if (_lessonAudio != null) {
+      jumpToSpan(beatIndex, autoPlay: autoPlay);
+      return;
+    }
     final b = beats;
     if (b.isEmpty) return;
     final i = beatIndex.clamp(0, b.length - 1);
-    if (_lessonAudio == null) {
-      _applyBeatVisuals(i);
-      _isPlaying = false;
-      _isPaused = false;
-      _caption =
-          'एकात्मिक मराठी आवाज तयार झाला नाही. कृपया पुन्हा Generate AI Lesson दाबा.';
-      notifyListeners();
-      return;
-    }
-    _applyBeatVisuals(i, resetSpeechProgress: false);
+    _applyBeatVisuals(i);
+    _isPlaying = false;
+    _isPaused = false;
+    _caption =
+        'एकात्मिक मराठी आवाज तयार झाला नाही. कृपया पुन्हा Generate AI Lesson दाबा.';
+    notifyListeners();
+  }
+
+  void jumpToSpan(int spanIndex, {required bool autoPlay}) {
+    final bundle = _lessonAudio;
+    if (bundle == null || bundle.spans.isEmpty) return;
+    final i = spanIndex.clamp(0, bundle.spans.length - 1);
+    _applySpanVisuals(i, resetSpeechProgress: false);
     final from = _spanStart(i);
     if (!autoPlay) {
       unawaited(_audio.seekTo(from));
       unawaited(_audio.pause());
       _isPlaying = false;
-      _isPaused = false;
+      _isPaused = true;
       notifyListeners();
       return;
     }
@@ -438,10 +489,17 @@ class VideoClassroomEngine extends ChangeNotifier {
       resume();
       return;
     }
+    _audio.releasePauseGate();
     _startContinuous(from: from);
   }
 
   void jumpToSlide(int slideIndex, {bool autoPlay = true}) {
+    final bundle = _lessonAudio;
+    if (bundle != null && bundle.spans.isNotEmpty) {
+      final idx = bundle.spans.indexWhere((s) => s.slideIndex == slideIndex);
+      jumpToSpan(idx >= 0 ? idx : 0, autoPlay: autoPlay);
+      return;
+    }
     final i = firstBeatIndexForSlide(beats, slideIndex);
     jumpToBeat(i, autoPlay: autoPlay);
   }
@@ -489,10 +547,12 @@ class VideoClassroomEngine extends ChangeNotifier {
     if (notify) notifyListeners();
   }
 
-  Duration _spanStart(int beatIndex) {
+  Duration _spanStart(int spanIndex) {
     final spans = _lessonAudio?.spans;
     if (spans == null || spans.isEmpty) return Duration.zero;
-    return spans[beatIndex.clamp(0, spans.length - 1)].start;
+    if (spanIndex < 0) return Duration.zero;
+    if (spanIndex >= spans.length) return spans.last.start;
+    return spans[spanIndex].start;
   }
 
   void _startContinuous({required Duration from}) {
@@ -505,15 +565,50 @@ class VideoClassroomEngine extends ChangeNotifier {
   }
 
   Future<void> _runContinuous(int sessionId, {required Duration from}) async {
+    ContinuousPlayResult result = ContinuousPlayResult.cancelled;
     try {
       await _audio.setSpeed(_playbackSpeed);
       await _audio.setMuted(_muted);
-      await _audio.playContinuous(from: from);
+      if (sessionId != _playSessionId || _disposed || _isPaused) return;
+      result = await _audio.playContinuous(from: from);
     } catch (e) {
       debugPrint('VideoClassroomEngine continuous play: $e');
+      return;
     }
-    if (sessionId != _playSessionId || _disposed) return;
+    if (sessionId != _playSessionId || _disposed || _isPaused) return;
+    if (result != ContinuousPlayResult.completed) return;
     await _finishLesson();
+  }
+
+  void _applySpanVisuals(
+    int spanIndex, {
+    bool notify = true,
+    bool resetSpeechProgress = true,
+  }) {
+    final bundle = _lessonAudio;
+    if (bundle == null || bundle.spans.isEmpty) return;
+    final i = spanIndex.clamp(0, bundle.spans.length - 1);
+    final span = bundle.spans[i];
+    _spanIndex = i;
+    _slideIndex = slideIndexForAudioSpan(
+      spanSlideIndex: span.slideIndex,
+      spanIndex: i,
+      spanCount: bundle.spans.length,
+      slideCount: _lesson.slides.length,
+    );
+    _caption = span.text;
+    _beatKind = null;
+    _activeBulletIndex = null;
+    _premiumSpotlight = PremiumSpotlight.none;
+    _premiumSpotlightText = '';
+    if (resetSpeechProgress) _speechProgress = 0;
+    _zoomPulse = false;
+    final slide = currentSlide;
+    if (slide != null && slide.animationSteps > 1) {
+      _revealCount = 1;
+    }
+    _syncPointerFromSpeech();
+    if (notify) notifyListeners();
   }
 
   void _syncContinuousFromProgress(double fileProgress) {
@@ -538,16 +633,13 @@ class VideoClassroomEngine extends ChangeNotifier {
     final local = spanMs <= 0
         ? 1.0
         : ((pos - span.start).inMilliseconds / spanMs).clamp(0.0, 1.0);
-    if (idx != _beatIndex) {
-      _applyBeatVisuals(idx, notify: false, resetSpeechProgress: false);
+    if (idx != _spanIndex) {
+      _applySpanVisuals(idx, notify: false, resetSpeechProgress: false);
     }
     _speechProgress = local;
     final slide = currentSlide;
     if (slide != null && slide.animationSteps > 1) {
-      final b = beats;
-      final target = (idx >= 0 && idx < b.length)
-          ? b[idx].revealCount.clamp(1, slide.animationSteps)
-          : slide.animationSteps;
+      final target = slide.animationSteps;
       _revealCount = (1 + (local.clamp(0.0, 0.999) * target).floor())
           .clamp(1, target);
     }
@@ -556,9 +648,13 @@ class VideoClassroomEngine extends ChangeNotifier {
   }
 
   Future<void> _finishLesson({bool offerQuiz = true}) async {
-    final b = beats;
-    _beatIndex = b.length;
+    final bundle = _lessonAudio;
+    _spanIndex = bundle == null || bundle.spans.isEmpty
+        ? 0
+        : bundle.spans.length;
+    _beatIndex = beats.length;
     _isPlaying = false;
+    _isPaused = false;
     _activeBulletIndex = null;
     _caption = _lesson.premium.quickRevision.trim().isNotEmpty
         ? _lesson.premium.quickRevision

@@ -2,18 +2,23 @@ import 'package:flutter/material.dart';
 import 'package:mpsc_combine_ai/admin/ai_lessons/admin_ai_lessons_screen.dart';
 import 'package:mpsc_combine_ai/admin/ai_teacher_content/admin_ai_teacher_content_screen.dart';
 import 'package:mpsc_combine_ai/admin/audit/admin_audit_log_screen.dart';
-import 'package:mpsc_combine_ai/admin/bulk_upload/admin_bulk_upload_screen.dart';
+import 'package:mpsc_combine_ai/admin/bulk_upload/admin_bulk_upload_hub_screen.dart';
 import 'package:mpsc_combine_ai/admin/current_affairs/admin_current_affairs_screen.dart';
 import 'package:mpsc_combine_ai/admin/faculty/admin_faculty_screen.dart';
+import 'package:mpsc_combine_ai/admin/flashcards/admin_flashcards_screen.dart';
+import 'package:mpsc_combine_ai/admin/jobs/admin_job_alerts_screen.dart';
 import 'package:mpsc_combine_ai/admin/live_classes/admin_live_class_attendance_screen.dart';
 import 'package:mpsc_combine_ai/admin/live_classes/admin_live_class_recordings_screen.dart';
 import 'package:mpsc_combine_ai/admin/live_classes/admin_live_classes_screen.dart';
 import 'package:mpsc_combine_ai/admin/mcqs/admin_mcqs_screen.dart';
+import 'package:mpsc_combine_ai/admin/notes/admin_notes_screen.dart';
 import 'package:mpsc_combine_ai/admin/notes/admin_subjects_screen.dart';
 import 'package:mpsc_combine_ai/admin/notifications/admin_notifications_screen.dart';
 import 'package:mpsc_combine_ai/admin/pyqs/admin_pyqs_screen.dart';
+import 'package:mpsc_combine_ai/admin/rag/admin_rag_sources_screen.dart';
 import 'package:mpsc_combine_ai/admin/seed/mpsc_curriculum_seeder.dart';
 import 'package:mpsc_combine_ai/admin/seed/sample_content_seeder.dart';
+import 'package:mpsc_combine_ai/admin/smart_tricks/admin_smart_tricks_screen.dart';
 import 'package:mpsc_combine_ai/admin/students/admin_students_screen.dart';
 import 'package:mpsc_combine_ai/admin/teaching_slides/admin_teaching_slides_screen.dart';
 import 'package:mpsc_combine_ai/admin/tests/admin_tests_screen.dart';
@@ -206,24 +211,52 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             childAspectRatio: 1.3,
             children: [
               AdminModuleCard(
-                title: 'Subjects',
-                subtitle: 'Subject → Topic → Notes',
-                icon: Icons.library_books_rounded,
+                title: 'Content Index',
+                subtitle: 'Exam → Subject → Chapter → Topic',
+                icon: Icons.account_tree_rounded,
                 onTap: () => Navigator.of(context).push(
                   MaterialPageRoute<void>(builder: (_) => const AdminSubjectsScreen()),
                 ),
               ),
               AdminModuleCard(
+                title: 'Notes',
+                subtitle: 'PDF-first notes · draft → publish · RAG',
+                icon: Icons.picture_as_pdf_rounded,
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(builder: (_) => const AdminNotesScreen()),
+                ),
+              ),
+              AdminModuleCard(
                 title: 'MCQs',
-                subtitle: 'Practice questions & sets',
+                subtitle: 'Practice sets · draft → publish · AI drafts',
                 icon: Icons.quiz_rounded,
                 onTap: () => Navigator.of(context).push(
                   MaterialPageRoute<void>(builder: (_) => const AdminMcqsScreen()),
                 ),
               ),
               AdminModuleCard(
+                title: 'Flashcards',
+                subtitle: 'Front/back cards · draft → publish · AI drafts',
+                icon: Icons.style_rounded,
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const AdminFlashcardsScreen(),
+                  ),
+                ),
+              ),
+              AdminModuleCard(
+                title: 'Smart Tricks',
+                subtitle: 'Memory tricks · draft → publish · AI drafts',
+                icon: Icons.psychology_alt_rounded,
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const AdminSmartTricksScreen(),
+                  ),
+                ),
+              ),
+              AdminModuleCard(
                 title: 'Tests',
-                subtitle: 'Mock tests / CBT papers',
+                subtitle: 'Mock tests · duration, marks, publish',
                 icon: Icons.assignment_rounded,
                 onTap: () => Navigator.of(context).push(
                   MaterialPageRoute<void>(builder: (_) => const AdminTestsScreen()),
@@ -231,10 +264,20 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               ),
               AdminModuleCard(
                 title: 'Current Affairs',
-                subtitle: 'Daily/weekly updates',
+                subtitle: 'Daily/weekly updates · draft → publish',
                 icon: Icons.newspaper_rounded,
                 onTap: () => Navigator.of(context).push(
                   MaterialPageRoute<void>(builder: (_) => const AdminCurrentAffairsScreen()),
+                ),
+              ),
+              AdminModuleCard(
+                title: 'Job Alerts',
+                subtitle: 'Recruitment / exam notices',
+                icon: Icons.work_outline_rounded,
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const AdminJobAlertsScreen(),
+                  ),
                 ),
               ),
               AdminModuleCard(
@@ -283,10 +326,20 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               ),
               AdminModuleCard(
                 title: 'PYQs',
-                subtitle: 'Previous year question papers',
+                subtitle: 'Previous year questions · import · publish',
                 icon: Icons.history_edu_rounded,
                 onTap: () => Navigator.of(context).push(
                   MaterialPageRoute<void>(builder: (_) => const AdminPyqsScreen()),
+                ),
+              ),
+              AdminModuleCard(
+                title: 'RAG Management',
+                subtitle: 'Content → index, re-index, test retrieval',
+                icon: Icons.auto_stories_rounded,
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const AdminRagSourcesScreen(),
+                  ),
                 ),
               ),
               AdminModuleCard(
@@ -309,7 +362,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               ),
               AdminModuleCard(
                 title: 'AI Teacher Content',
-                subtitle: 'Authored lessons, quizzes & notes',
+                subtitle: 'Authored lessons · review · publish',
                 icon: Icons.co_present_rounded,
                 onTap: () => Navigator.of(context).push(
                   MaterialPageRoute<void>(builder: (_) => const AdminAiTeacherContentScreen()),
@@ -317,7 +370,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               ),
               AdminModuleCard(
                 title: 'Students',
-                subtitle: 'Search, block/unblock, assign',
+                subtitle: 'Analytics, block, assign courses',
                 icon: Icons.people_rounded,
                 onTap: () => Navigator.of(context).push(
                   MaterialPageRoute<void>(builder: (_) => const AdminStudentsScreen()),
@@ -333,10 +386,12 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               ),
               AdminModuleCard(
                 title: 'Bulk Upload',
-                subtitle: 'Import MCQs from CSV / Excel',
+                subtitle: 'Import MCQ / PYQ / Flashcard / Trick as DRAFT',
                 icon: Icons.file_upload_rounded,
                 onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(builder: (_) => const AdminBulkUploadScreen()),
+                  MaterialPageRoute<void>(
+                    builder: (_) => const AdminBulkUploadHubScreen(),
+                  ),
                 ),
               ),
               AdminModuleCard(

@@ -22,6 +22,14 @@ class CurrentAffairsRepository {
         );
   }
 
+  /// Students only see published entries. Legacy docs without status stay
+  /// visible (treated as published).
+  Stream<List<CurrentAffairItem>> watchPublished() {
+    return watchAll().map(
+      (all) => all.where((e) => e.isStudentVisible).toList(),
+    );
+  }
+
   Future<String> add(CurrentAffairItem item) async {
     final doc = await _ref.add(item.toMap());
     return doc.id;

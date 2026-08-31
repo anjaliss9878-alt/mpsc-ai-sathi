@@ -16,7 +16,7 @@ class BookmarksScreen extends StatelessWidget {
 
   Future<void> _open(BuildContext context, BookmarkItem item) async {
     if (item.type == 'mcq') {
-      final all = await mcqRepository.watchAll().first;
+      final all = await mcqRepository.watchPublished().first;
       McqItem? match;
       for (final q in all) {
         if (q.id == item.refId) {

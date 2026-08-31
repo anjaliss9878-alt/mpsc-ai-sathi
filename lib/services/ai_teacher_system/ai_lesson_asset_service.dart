@@ -14,7 +14,9 @@ class AiLessonAssetService {
 
   final StorageService _storage;
 
-  String audioPath(String lessonId, {String ext = 'wav'}) =>
+  String audioPath(String lessonId, {String ext = 'mp3'}) =>
+      'ai_lessons/$lessonId/audio.$ext';
+  String legacyAudioPath(String lessonId, {String ext = 'mp3'}) =>
       'audio/$lessonId.$ext';
   String videoPath(String lessonId) => 'videos/ai_lessons/$lessonId.mp4';
   String thumbnailPath(String lessonId) => 'thumbnails/$lessonId.jpg';
@@ -22,9 +24,12 @@ class AiLessonAssetService {
   Future<String> uploadAudio({
     required String lessonId,
     required Uint8List bytes,
-    String contentType = 'audio/wav',
-    String ext = 'wav',
+    String contentType = 'audio/mpeg',
+    String ext = 'mp3',
   }) async {
+    if (bytes.isEmpty) {
+      throw StateError('Cannot upload empty AI Teacher audio');
+    }
     final path = audioPath(lessonId, ext: ext);
     await _storage.uploadBytesAtPath(
       path: path,
@@ -32,8 +37,21 @@ class AiLessonAssetService {
       contentType: contentType,
       debugLabel: 'ai-audio',
     );
+    if (!await existsAtPath(path)) {
+      throw StateError('Audio upload did not create $path');
+    }
     mediaBytesCache.write(path, bytes);
     return path;
+  }
+
+  Future<bool> existsAtPath(String storedPath) async {
+    if (storedPath.trim().isEmpty) return false;
+    try {
+      await _storage.refFromStored(storedPath).getMetadata();
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<String> uploadVideoBytes({

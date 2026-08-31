@@ -6,6 +6,7 @@ import 'package:mpsc_combine_ai/screens/ai_teacher_classroom/ai_teacher_classroo
     deferred as ai_classroom;
 import 'package:mpsc_combine_ai/screens/certificates/certificates_screen.dart';
 import 'package:mpsc_combine_ai/screens/subject_notes_screen.dart';
+import 'package:mpsc_combine_ai/screens/syllabus/syllabus_tracker_screen.dart';
 import 'package:mpsc_combine_ai/screens/topic_list_screen.dart';
 import 'package:mpsc_combine_ai/services/auth_service.dart';
 import 'package:mpsc_combine_ai/services/notes_repository.dart';
@@ -134,6 +135,31 @@ class CoursesTabScreen extends StatelessWidget {
                     return ListView(
                       padding: const EdgeInsets.all(16),
                       children: [
+                        Card(
+                          child: ListTile(
+                            leading: const Icon(
+                              Icons.checklist_rounded,
+                              color: AppColors.navy,
+                            ),
+                            title: const Text(
+                              'अभ्यासक्रम प्रगती',
+                              style: TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                            subtitle: const Text(
+                              'पूर्ण / सुरू / बाकी टॉपिक ट्रॅक करा',
+                            ),
+                            trailing: const Icon(
+                              Icons.chevron_right_rounded,
+                              color: AppColors.orange,
+                            ),
+                            onTap: () => Navigator.of(context).push(
+                              MaterialPageRoute<void>(
+                                builder: (_) => const SyllabusTrackerScreen(),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
                         Text(
                           assigned.isEmpty
                               ? 'All courses'

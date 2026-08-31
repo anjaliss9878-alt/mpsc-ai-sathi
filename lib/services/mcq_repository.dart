@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:mpsc_combine_ai/models/content_index.dart';
 import 'package:mpsc_combine_ai/models/mcq_item.dart';
 
 /// Reads/writes MCQ practice questions in Firestore at `mcqs/{id}`.
@@ -19,6 +20,13 @@ class McqRepository {
         );
   }
 
+  /// Student practice: published workflow only. Drafts stay in Admin.
+  Stream<List<McqItem>> watchPublished() {
+    return watchAll().map(
+      (all) => all.where((q) => q.isStudentVisible).toList(),
+    );
+  }
+
   /// MCQs whose [McqItem.subject] matches [subjectName] (case-insensitive),
   /// used by the Notes detail screen to show related practice questions.
   Stream<List<McqItem>> watchForSubject(String subjectName) {
@@ -28,7 +36,7 @@ class McqRepository {
     }
     return watchAll().map(
       (all) => all
-          .where((q) => q.published)
+          .where((q) => q.isStudentVisible)
           .where((q) => q.subject.trim().toLowerCase() == needle ||
               q.subject.trim().toLowerCase().contains(needle) ||
               needle.contains(q.subject.trim().toLowerCase()))
@@ -41,7 +49,15 @@ class McqRepository {
     if (chapterId.isEmpty) return Stream.value(const []);
     return watchAll().map(
       (all) => all
-          .where((q) => q.published && q.chapterId == chapterId)
+          .where(
+            (q) =>
+                q.isStudentVisible &&
+                contentLinkedToTopic(
+                  topicId: chapterId,
+                  topicIdField: q.topicId,
+                  chapterIdField: q.chapterId,
+                ),
+          )
           .toList(),
     );
   }
@@ -51,7 +67,7 @@ class McqRepository {
     if (subjectId.isEmpty) return Stream.value(const []);
     return watchAll().map(
       (all) => all
-          .where((q) => q.published && q.subjectId == subjectId)
+          .where((q) => q.isStudentVisible && q.subjectId == subjectId)
           .toList(),
     );
   }

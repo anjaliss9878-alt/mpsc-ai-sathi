@@ -31,6 +31,36 @@
   to = "/.netlify/functions/ai-tts"
   status = 200
 
+[[redirects]]
+  from = "/rag/extract"
+  to = "/.netlify/functions/rag-extract"
+  status = 200
+
+[[redirects]]
+  from = "/rag/embed"
+  to = "/.netlify/functions/rag-embed"
+  status = 200
+
+[[redirects]]
+  from = "/rag/learn"
+  to = "/.netlify/functions/rag-learn"
+  status = 200
+
+[[redirects]]
+  from = "/rag/retrieve"
+  to = "/.netlify/functions/rag-retrieve"
+  status = 200
+
+[[redirects]]
+  from = "/rag/vertex-embed"
+  to = "/.netlify/functions/rag-vertex-embed"
+  status = 200
+
+[[redirects]]
+  from = "/rag/vertex-learn"
+  to = "/.netlify/functions/rag-vertex-learn"
+  status = 200
+
 # Flutter web SPA fallback
 [[redirects]]
   from = "/*"

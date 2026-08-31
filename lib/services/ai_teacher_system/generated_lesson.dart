@@ -1141,21 +1141,185 @@ List<String> topicMatchAliases(String topic) {
   return map[key] ?? const [];
 }
 
-/// Empty board shown before the student generates a topic lesson.
+/// Canonical 8-scene MPSC classroom sample (संसद). Used as the empty-state
+/// demo and as the teaching-sequence / quiz regression contract.
 final GeneratedLesson welcomeLesson = GeneratedLesson(
-  question: '',
-  topicName: '',
-  subjectName: '',
-  createdAt: DateTime.now(),
-  script: const [],
+  question: 'भारतीय संसद म्हणजे काय?',
+  topicName: 'भारतीय संसद',
+  subjectName: 'राज्यव्यवस्था',
+  createdAt: DateTime(2026, 1, 1),
+  script: const [
+    'नमस्कार. आज भारतीय संसद शिकूया.',
+    'संसद ही भारताचे केंद्रीय विधिमंडळ आहे.',
+    'उदाहरणार्थ अर्थसंकल्प प्रथम लोकसभेत येतो.',
+    'रा लो रा — राष्ट्रपती, लोकसभा, राज्यसभा.',
+    'मागील प्रश्नपत्रिकांमध्ये हा फरक वारंवार येतो.',
+    'संसदेचे तीन भाग कोणते?',
+    'विधिमंडळ आणि दोन सभागृहे आठवा.',
+    'समारोप — संकल्पना पक्की करा.',
+  ],
   slides: const [
     GeneratedSlide(
-      title: 'AI Teacher',
-      bullets: [],
+      title: 'भारतीय संसद',
+      bullets: ['आजचा विषय', 'MPSC महत्त्व', 'तीन भाग'],
+      sceneType: LessonSceneType.title,
+      visualType: SlideVisualType.icons,
+      iconLabels: ['अभिवादन', 'संसद', 'MPSC'],
+      keywords: ['संसद'],
+      narration:
+          'नमस्कार विद्यार्थी मित्रांनो. आज आपण भारतीय संसद शिकणार आहोत. '
+          'MPSC Combine मध्ये हा विषय वारंवार येतो.',
+    ),
+    GeneratedSlide(
+      title: 'मूलभूत संकल्पना',
+      bullets: ['केंद्रीय विधिमंडळ', 'अनुच्छेद ७९', 'तीन अंगे'],
+      sceneType: LessonSceneType.introduction,
+      visualType: SlideVisualType.whiteboard,
+      keywords: ['विधिमंडळ', 'अनुच्छेद'],
+      narration:
+          'संसद म्हणजे भारताचे केंद्रीय विधिमंडळ. अनुच्छेद ७९ नुसार तिच्यात '
+          'राष्ट्रपती, लोकसभा आणि राज्यसभा येतात. फक्त सभागृह नाही — तीनही अंगे मिळून संसद.',
+    ),
+    GeneratedSlide(
+      title: 'सविस्तर स्पष्टीकरण',
+      bullets: ['लोकसभा', 'राज्यसभा', 'राष्ट्रपती'],
+      sceneType: LessonSceneType.mainExplanation,
+      visualType: SlideVisualType.table,
+      tableHeaders: ['अंग', 'ओळख'],
+      tableRows: [
+        ['लोकसभा', 'थेट निवड'],
+        ['राज्यसभा', 'स्थायी सभागृह'],
+        ['राष्ट्रपती', 'संसदेचा भाग'],
+      ],
+      keywords: ['लोकसभा', 'राज्यसभा'],
+      narration:
+          'लोकसभा थेट निवडणुकीने येते, राज्यसभा स्थायी आहे, आणि राष्ट्रपती संसदेचा '
+          'अविभाज्य भाग आहे. परीक्षा या तीन फरकांवरच विचारते.',
+      sectionQuestion: GeneratedMcq(
+        question: 'संसदेत कोणते तीन भाग येतात?',
+        options: [
+          'राष्ट्रपती, लोकसभा, राज्यसभा',
+          'फक्त लोकसभा',
+          'सुप्रीम कोर्ट',
+          'मंत्रिमंडळ',
+        ],
+        correctIndex: 0,
+        explanation: 'अनुच्छेद ७९ नुसार संसदेत राष्ट्रपती, लोकसभा व राज्यसभा येतात.',
+      ),
+    ),
+    GeneratedSlide(
+      title: 'उदाहरण',
+      bullets: ['अर्थसंकल्प', 'लोकसभा प्रथम', 'मनी बिल'],
+      sceneType: LessonSceneType.examples,
+      narration:
+          'उदाहरणार्थ, अर्थसंकल्प आणि मनी बिल प्रथम लोकसभेत मांडले जातात. '
+          'हे फरक Prelims मध्ये थेट विचारले जातात.',
+    ),
+    GeneratedSlide(
+      title: 'आकृती',
+      bullets: ['विधेयक', 'दोन्ही सभागृहे', 'राष्ट्रपती'],
+      sceneType: LessonSceneType.diagram,
+      visualType: SlideVisualType.flowchart,
+      flowchart: [
+        FlowNode(id: '1', label: 'विधेयक', nextIds: ['2']),
+        FlowNode(id: '2', label: 'सभागृहे', nextIds: ['3']),
+        FlowNode(id: '3', label: 'मान्यता', nextIds: []),
+      ],
+      narration:
+          'कायदा प्रक्रिया अशी: विधेयक सभागृहात येते, दोन्ही सभागृहे पास करतात, '
+          'मग राष्ट्रपतींची मान्यता. बोर्ड ही पायरी दाखवेल — मी संकल्पना समजावेन.',
+    ),
+    GeneratedSlide(
+      title: 'PYQ स्पष्टीकरण',
+      bullets: ['व्याख्या व फरक', 'अनुच्छेद ७९', 'सामान्य चूक'],
+      sceneType: LessonSceneType.importantPoints,
+      keywords: ['PYQ', 'अनुच्छेद'],
+      narration:
+          'मागील प्रश्नपत्रिकांमध्ये संसदेची व्याख्या आणि लोकसभा-राज्यसभा फरक '
+          'वारंवार येतो. विद्यार्थी राष्ट्रपतीला संसदेबाहेर समजतात — ती चूक टाळा.',
+    ),
+    GeneratedSlide(
+      title: 'सराव MCQ',
+      bullets: ['पाच प्रश्न', 'स्पष्टीकरणासह'],
+      sceneType: LessonSceneType.quiz,
+      narration:
+          'आता पाच सराव प्रश्न सोडवूया. प्रत्येक उत्तरामागचे कारण मनात बांधा.',
+    ),
+    GeneratedSlide(
+      title: 'पुनरावलोकन',
+      bullets: ['तीन अंगे', 'लोकसभा प्रथम', 'अनुच्छेद ७९'],
+      sceneType: LessonSceneType.summary,
+      narration:
+          'थोडक्यात: संसद म्हणजे राष्ट्रपती अधिक दोन सभागृहे. अर्थसंकल्प लोकसभेत '
+          'प्रथम येतो. अनुच्छेद ७९ ही व्याख्या आठवा.',
     ),
   ],
-  summary: '',
-  mcqs: const [],
-  notes: const [],
+  summary:
+      'भारतीय संसद = राष्ट्रपती + लोकसभा + राज्यसभा. अर्थसंकल्प लोकसभेत प्रथम.',
+  mcqs: const [
+    GeneratedMcq(
+      question: 'भारतीय संसदेत कोणते तीन भाग येतात?',
+      options: [
+        'राष्ट्रपती, लोकसभा, राज्यसभा',
+        'फक्त लोकसभा व राज्यसभा',
+        'मंत्रिमंडळ व न्यायालय',
+        'राज्यपाल व विधानसभा',
+      ],
+      correctIndex: 0,
+      explanation: 'अनुच्छेद ७९ नुसार संसदेत राष्ट्रपती, लोकसभा आणि राज्यसभा येतात.',
+      wrongExplanations: {
+        '1': 'राष्ट्रपती संसदेचा भाग आहे, केवळ दोन सभागृहे नाहीत.',
+        '2': 'मंत्रिमंडळ व न्यायालय संसद नाहीत.',
+        '3': 'ही राज्य स्तराची रचना आहे.',
+      },
+    ),
+    GeneratedMcq(
+      question: 'अर्थसंकल्प प्रथम कोठे मांडला जातो?',
+      options: ['लोकसभा', 'राज्यसभा', 'सुप्रीम कोर्ट', 'निवडणूक आयोग'],
+      correctIndex: 0,
+      explanation: 'मनी बिल व अर्थसंकल्प प्रथम लोकसभेत मांडले जातात.',
+    ),
+    GeneratedMcq(
+      question: 'संसदेची रचना कोणत्या अनुच्छेदात आहे?',
+      options: ['७९', '५२', '३५६', '२१'],
+      correctIndex: 0,
+      explanation: 'अनुच्छेद ७९ संसदेची रचना सांगतो.',
+    ),
+    GeneratedMcq(
+      question: 'राज्यसभा कोणत्या प्रकारचे सभागृह आहे?',
+      options: ['स्थायी', 'पाच वर्षांचे', 'तात्पुरते', 'नियुक्त नाही'],
+      correctIndex: 0,
+      explanation: 'राज्यसभा स्थायी सभागृह आहे; ती पूर्णपणे विसर्जित होत नाही.',
+    ),
+    GeneratedMcq(
+      question: 'राष्ट्रपती संसदेचा भाग आहे का?',
+      options: ['होय', 'नाही', 'फक्त युद्धात', 'फक्त अर्थसंकल्पात'],
+      correctIndex: 0,
+      explanation: 'होय. अनुच्छेद ७९ नुसार राष्ट्रपती संसदेचा भाग आहे.',
+    ),
+  ],
+  notes: const [
+    'संसद = राष्ट्रपती + लोकसभा + राज्यसभा',
+    'अनुच्छेद ७९ — रचना',
+    'अर्थसंकल्प लोकसभेत प्रथम',
+    'राज्यसभा स्थायी सभागृह',
+    'लोकसभा थेट निवड',
+  ],
+  premium: const LessonPremiumExtras(
+    importantFacts: [
+      'अनुच्छेद ७९ संसदेची रचना सांगतो.',
+      'राष्ट्रपती संसदेचा भाग आहे.',
+      'अर्थसंकल्प प्रथम लोकसभेत येतो.',
+    ],
+    examTips: ['व्याख्या व फरक एकत्र बांधा — तीन अंगे विसरू नका.'],
+    memoryTricks: ['रा + लो + रा — राष्ट्रपती, लोकसभा, राज्यसभा.'],
+    pyqInsight: [
+      'मागील वर्षी संसदेची व्याख्या व लोकसभा-राज्यसभा फरक थेट विचारले गेले.',
+    ],
+    commonMistakes: ['राष्ट्रपतीला संसदेबाहेर समजणे.'],
+    onePageSummary:
+        'संसद म्हणजे केंद्रीय विधिमंडळ: राष्ट्रपती, लोकसभा, राज्यसभा.',
+    quickRevision: '७९ · तीन अंगे · अर्थसंकल्प लोकसभा · राज्यसभा स्थायी.',
+  ),
 );
 

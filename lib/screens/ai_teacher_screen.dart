@@ -5,14 +5,24 @@ import 'package:flutter/services.dart';
 import 'package:mpsc_combine_ai/models/chat_message.dart';
 import 'package:mpsc_combine_ai/models/chat_session.dart';
 import 'package:mpsc_combine_ai/models/chat_subject.dart';
+import 'package:mpsc_combine_ai/models/rag_source.dart';
+import 'package:mpsc_combine_ai/rag/rag_exceptions.dart';
+import 'package:mpsc_combine_ai/rag/rag_source_filter.dart';
 import 'package:mpsc_combine_ai/services/ai_avatar_service.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_service.dart';
 import 'package:mpsc_combine_ai/services/auth_service.dart';
 import 'package:mpsc_combine_ai/services/chat_repository.dart';
+import 'package:mpsc_combine_ai/services/personalized_multi_rag_service.dart';
+import 'package:mpsc_combine_ai/services/rag_grounded_learning_service.dart';
+import 'package:mpsc_combine_ai/services/rag_retrieval_service.dart';
+import 'package:mpsc_combine_ai/services/rag_source_repository.dart';
 import 'package:mpsc_combine_ai/theme/app_colors.dart';
 import 'package:mpsc_combine_ai/utils/chat_categorizer.dart';
 import 'package:mpsc_combine_ai/widgets/ai_avatar_widgets.dart';
 import 'package:mpsc_combine_ai/widgets/chat_widgets.dart';
+import 'package:mpsc_combine_ai/widgets/rag_citation_block.dart';
+import 'package:mpsc_combine_ai/widgets/rag_source_picker.dart';
+import 'package:mpsc_combine_ai/widgets/rag_study_tool_sheets.dart';
 import 'package:share_plus/share_plus.dart';
 
 class AiTeacherScreen extends StatefulWidget {
@@ -40,6 +50,10 @@ class _AiTeacherScreenState extends State<AiTeacherScreen> {
   bool _isSwitchingChat = false;
   String? _errorMessage;
   String? _lastUserMessage;
+  RagSourceFilter _sourceFilter = RagSourceFilter.allPublished;
+  List<RagSource> _publishedSources = const [];
+  StreamSubscription<List<RagSource>>? _sourcesSub;
+  bool _toolBusy = false;
 
   // AI Avatar module: only one message can be "speaking" at a time via the
   // single shared [aiAvatarProvider]. Correlated by timestamp because
@@ -63,6 +77,10 @@ class _AiTeacherScreenState extends State<AiTeacherScreen> {
     super.initState();
     _messages.add(_welcomeMessage());
     _loadMostRecentChat();
+    _sourcesSub = ragSourceRepository.watchPublishedReady().listen((sources) {
+      if (!mounted) return;
+      setState(() => _publishedSources = sources);
+    });
     _avatarSubscription = aiAvatarProvider.stateStream.listen((state) {
       if (!mounted) return;
       setState(() => _avatarState = state);
@@ -110,6 +128,7 @@ class _AiTeacherScreenState extends State<AiTeacherScreen> {
   void dispose() {
     _inputController.dispose();
     _scrollController.dispose();
+    _sourcesSub?.cancel();
     _avatarSubscription?.cancel();
     aiAvatarProvider.stop();
     super.dispose();
@@ -145,8 +164,8 @@ class _AiTeacherScreenState extends State<AiTeacherScreen> {
     return ChatMessage(
       role: ChatRole.assistant,
       content: 'नमस्कार! मी तुमचा MPSC AI शिक्षक आहे. तुम्ही मराठी किंवा '
-          'इंग्रजीत कोणताही प्रश्न विचारू शकता — मी MPSC अभ्यासक्रमावर आधारित '
-          'सोप्या भाषेत उत्तर देईन.',
+          'इंग्रजीत कोणताही प्रश्न विचारू शकता — मी प्रकाशित MPSC स्रोतांवर '
+          'आधारित सोप्या भाषेत उत्तर देईन.',
       timestamp: DateTime.now(),
     );
   }
@@ -356,15 +375,21 @@ class _AiTeacherScreenState extends State<AiTeacherScreen> {
     });
 
     try {
-      final reply = await aiTeacherService.sendMessage(
+      final reply = await answerWithStudentRag(
+        question: userMessage,
         history: history,
-        userMessage: userMessage,
+        filter: _sourceFilter,
+        fromAiTeacher: true,
+        subjectId: _sourceFilter.subjectId,
+        chapterId: _sourceFilter.chapterId,
+        topicId: _sourceFilter.topicId,
       );
       if (!mounted) return;
       final assistantMessage = ChatMessage(
         role: ChatRole.assistant,
-        content: reply,
+        content: reply.markdown,
         timestamp: DateTime.now(),
+        citations: reply.citations,
       );
       setState(() {
         _messages.add(assistantMessage);
@@ -376,10 +401,7 @@ class _AiTeacherScreenState extends State<AiTeacherScreen> {
       if (!mounted) return;
       setState(() {
         _isLoading = false;
-        _errorMessage = e is AiServiceException
-            ? e.message
-            : 'काहीतरी चुकले. कृपया पुन्हा प्रयत्न करा.\n'
-                '(Something went wrong. Please retry.)';
+        _errorMessage = _teacherError(e);
       });
     }
     _scrollToBottom();
@@ -409,16 +431,22 @@ class _AiTeacherScreenState extends State<AiTeacherScreen> {
     _scrollToBottom();
 
     try {
-      final reply = await aiTeacherService.sendMessage(
+      final reply = await answerWithStudentRag(
+        question: precedingUser.content,
         history: history,
-        userMessage: precedingUser.content,
+        filter: _sourceFilter,
+        fromAiTeacher: true,
+        subjectId: _sourceFilter.subjectId,
+        chapterId: _sourceFilter.chapterId,
+        topicId: _sourceFilter.topicId,
       );
       if (!mounted) return;
 
       final newAssistantMessage = ChatMessage(
         role: ChatRole.assistant,
-        content: reply,
+        content: reply.markdown,
         timestamp: DateTime.now(),
+        citations: reply.citations,
       );
       setState(() {
         _messages.add(newAssistantMessage);
@@ -434,7 +462,8 @@ class _AiTeacherScreenState extends State<AiTeacherScreen> {
               uid,
               chatId,
               assistantMessage.id!,
-              reply,
+              reply.markdown,
+              citations: reply.citations.map((c) => c.toMap()).toList(),
             );
             if (mounted) {
               final idx = _messages.indexOf(newAssistantMessage);
@@ -458,10 +487,7 @@ class _AiTeacherScreenState extends State<AiTeacherScreen> {
         _isLoading = false;
         // Put the original reply back so nothing is lost on failure.
         _messages.insert(index, assistantMessage);
-        _errorMessage = e is AiServiceException
-            ? e.message
-            : 'काहीतरी चुकले. कृपया पुन्हा प्रयत्न करा.\n'
-                '(Something went wrong. Please retry.)';
+        _errorMessage = _teacherError(e);
       });
     }
     _scrollToBottom();
@@ -470,17 +496,159 @@ class _AiTeacherScreenState extends State<AiTeacherScreen> {
   // ─── Copy / Share ───────────────────────────────────────────────────────
 
   void _copyMessage(ChatMessage message) {
-    Clipboard.setData(ClipboardData(text: message.content));
+    Clipboard.setData(
+      ClipboardData(
+        text: '${message.content}${citationsShareText(message.citations)}',
+      ),
+    );
     _showSnack('मेसेज कॉपी झाला! (Copied!)');
   }
 
   Future<void> _shareMessage(ChatMessage message) async {
     await SharePlus.instance.share(
       ShareParams(
-        text: message.content,
+        text: '${message.content}${citationsShareText(message.citations)}',
         subject: 'MPSC COMBINE AI — AI Teacher',
       ),
     );
+  }
+
+  String _teacherError(Object e) {
+    if (e is RagException) return e.message;
+    if (e is AiServiceException) return e.message;
+    return 'काहीतरी चुकले. कृपया पुन्हा प्रयत्न करा.\n'
+        '(Something went wrong. Please retry.)';
+  }
+
+  String _toolTopic() {
+    final typed = _inputController.text.trim();
+    if (typed.isNotEmpty) return typed;
+    if (_lastUserMessage != null && _lastUserMessage!.trim().isNotEmpty) {
+      return _lastUserMessage!.trim();
+    }
+    if (_sourceFilter.subject.isNotEmpty) {
+      return '${_sourceFilter.subject} ${_sourceFilter.chapter}'.trim();
+    }
+    return '';
+  }
+
+  Future<List<RagHit>?> _studentPrefetchedHits(String topic) async {
+    final uid = _uid;
+    if (uid == null || uid.isEmpty) return null;
+    try {
+      return await personalizedMultiRagService.retrieveKnowledgeHits(
+        uid: uid,
+        requesterUid: uid,
+        question: topic,
+        fromAiTeacher: true,
+        subjectId: _sourceFilter.subjectId,
+        chapterId: _sourceFilter.chapterId,
+        topicId: _sourceFilter.topicId,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _runStudyTool(String kind) async {
+    final topic = _toolTopic();
+    if (topic.isEmpty) {
+      _showSnack('प्रथम विषय किंवा प्रश्न लिहा.');
+      return;
+    }
+    if (_toolBusy || _isLoading) return;
+    setState(() => _toolBusy = true);
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+    try {
+      final history = _messages;
+      final hits = await _studentPrefetchedHits(topic);
+      Widget child;
+      String title;
+      switch (kind) {
+        case 'summary':
+          title = 'Summary';
+          child = RagSummaryView(
+            summary: await ragGroundedLearningService.summary(
+              topic: topic,
+              history: history,
+              filter: _sourceFilter,
+              prefetchedHits: hits,
+            ),
+          );
+          break;
+        case 'mcq':
+          title = 'MCQ';
+          child = RagMcqView(
+            questions: await ragGroundedLearningService.mcqs(
+              topic: topic,
+              history: history,
+              filter: _sourceFilter,
+              prefetchedHits: hits,
+            ),
+          );
+          break;
+        case 'pyq':
+          title = 'PYQ';
+          child = RagPyqView(
+            items: await ragGroundedLearningService.pyqConnections(
+              topic: topic,
+              history: history,
+              filter: _sourceFilter,
+              prefetchedHits: hits,
+            ),
+          );
+          break;
+        case 'flashcards':
+          title = 'Flashcards';
+          child = RagFlashcardDeck(
+            cards: await ragGroundedLearningService.flashcards(
+              topic: topic,
+              history: history,
+              filter: _sourceFilter,
+              prefetchedHits: hits,
+            ),
+          );
+          break;
+        case 'revision':
+          title = 'Quick Revision';
+          child = RagRevisionView(
+            revision: await ragGroundedLearningService.quickRevision(
+              topic: topic,
+              history: history,
+              filter: _sourceFilter,
+              prefetchedHits: hits,
+            ),
+          );
+          break;
+        case 'memory':
+          title = 'Memory Tricks';
+          child = RagMemoryTricksView(
+            tricks: await ragGroundedLearningService.memoryTricks(
+              topic: topic,
+              history: history,
+              filter: _sourceFilter,
+              prefetchedHits: hits,
+            ),
+          );
+          break;
+        default:
+          title = 'Ask AI';
+          child = const SizedBox.shrink();
+      }
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      await showRagStudySheet(context: context, title: title, child: child);
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      _showSnack(_teacherError(e));
+    } finally {
+      if (mounted) setState(() => _toolBusy = false);
+    }
   }
 
   // ─── UI ──────────────────────────────────────────────────────────────────
@@ -571,6 +739,41 @@ class _AiTeacherScreenState extends State<AiTeacherScreen> {
             constraints: BoxConstraints(maxWidth: maxContentWidth),
             child: Column(
               children: [
+                ExpansionTile(
+                  tilePadding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+                  title: const Text(
+                    '📚 Sources',
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                  ),
+                  subtitle: Text(
+                    _sourceFilter.scope == RagSourceScope.allPublished
+                        ? 'All published (${_publishedSources.length})'
+                        : _sourceFilter.scope == RagSourceScope.selectedSources
+                            ? '${_sourceFilter.sourceIds.length} selected'
+                            : [
+                                if (_sourceFilter.subject.isNotEmpty)
+                                  _sourceFilter.subject,
+                                if (_sourceFilter.chapter.isNotEmpty)
+                                  _sourceFilter.chapter,
+                              ].join(' · '),
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  children: [
+                    Padding(
+                      padding: EdgeInsets.fromLTRB(
+                        horizontalPadding,
+                        0,
+                        horizontalPadding,
+                        12,
+                      ),
+                      child: RagSourcePicker(
+                        sources: _publishedSources,
+                        filter: _sourceFilter,
+                        onChanged: (next) => setState(() => _sourceFilter = next),
+                      ),
+                    ),
+                  ],
+                ),
                 Expanded(
                   child: _isSwitchingChat
                       ? const Center(
@@ -711,6 +914,36 @@ class _AiTeacherScreenState extends State<AiTeacherScreen> {
                                   'or ASCII/Markdown diagram for the current topic, '
                                   'with labeled parts I can revise from.',
                                 ),
+                      ),
+                      ActionChip(
+                        avatar: const Icon(Icons.notes_rounded, size: 18),
+                        label: const Text('Summary'),
+                        onPressed: _toolBusy ? null : () => _runStudyTool('summary'),
+                      ),
+                      ActionChip(
+                        avatar: const Icon(Icons.quiz_outlined, size: 18),
+                        label: const Text('MCQ'),
+                        onPressed: _toolBusy ? null : () => _runStudyTool('mcq'),
+                      ),
+                      ActionChip(
+                        avatar: const Icon(Icons.history_edu_outlined, size: 18),
+                        label: const Text('PYQ'),
+                        onPressed: _toolBusy ? null : () => _runStudyTool('pyq'),
+                      ),
+                      ActionChip(
+                        avatar: const Icon(Icons.style_outlined, size: 18),
+                        label: const Text('Flashcards'),
+                        onPressed: _toolBusy ? null : () => _runStudyTool('flashcards'),
+                      ),
+                      ActionChip(
+                        avatar: const Icon(Icons.bolt_outlined, size: 18),
+                        label: const Text('Quick Revision'),
+                        onPressed: _toolBusy ? null : () => _runStudyTool('revision'),
+                      ),
+                      ActionChip(
+                        avatar: const Icon(Icons.psychology_outlined, size: 18),
+                        label: const Text('Memory Tricks'),
+                        onPressed: _toolBusy ? null : () => _runStudyTool('memory'),
                       ),
                     ],
                   ),

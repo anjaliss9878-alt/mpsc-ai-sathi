@@ -10,7 +10,7 @@ class MediaBytesCache {
   static final MediaBytesCache instance = MediaBytesCache._();
 
   static const int maxEntries = 10;
-  static const int maxBytes = 12 * 1024 * 1024;
+  static const int maxBytes = 32 * 1024 * 1024;
 
   final Map<String, Uint8List> _data = <String, Uint8List>{};
   final List<String> _order = <String>[];

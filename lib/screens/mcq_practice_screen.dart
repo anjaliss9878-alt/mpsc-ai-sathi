@@ -32,7 +32,7 @@ class McqPracticeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<List<McqItem>>(
-      stream: mcqRepository.watchAll(),
+      stream: mcqRepository.watchPublished(),
       builder: (context, snapshot) {
         final items = snapshot.data ?? const <McqItem>[];
         final sets = _groupBySet(items);

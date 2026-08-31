@@ -11,6 +11,10 @@ class AdminListTile extends StatelessWidget {
     required this.onEdit,
     required this.onDelete,
     this.onTap,
+    this.onToggleActive,
+    this.isActive,
+    this.onPreview,
+    this.onApprove,
   });
 
   final String title;
@@ -19,6 +23,10 @@ class AdminListTile extends StatelessWidget {
   final VoidCallback onEdit;
   final VoidCallback onDelete;
   final VoidCallback? onTap;
+  final VoidCallback? onToggleActive;
+  final bool? isActive;
+  final VoidCallback? onPreview;
+  final VoidCallback? onApprove;
 
   @override
   Widget build(BuildContext context) {
@@ -43,10 +51,33 @@ class AdminListTile extends StatelessWidget {
         ),
         subtitle: subtitle == null
             ? null
-            : Text(subtitle!, maxLines: 2, overflow: TextOverflow.ellipsis),
+            : Text(subtitle!, maxLines: 3, overflow: TextOverflow.ellipsis),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (onPreview != null)
+              IconButton(
+                icon: const Icon(Icons.preview_outlined, color: AppColors.navy),
+                tooltip: 'Preview',
+                onPressed: onPreview,
+              ),
+            if (onApprove != null)
+              IconButton(
+                icon: const Icon(Icons.task_alt_rounded, color: AppColors.navy),
+                tooltip: 'Approve',
+                onPressed: onApprove,
+              ),
+            if (onToggleActive != null)
+              IconButton(
+                icon: Icon(
+                  isActive == false
+                      ? Icons.visibility_off_outlined
+                      : Icons.visibility_outlined,
+                  color: isActive == false ? Colors.grey : AppColors.navy,
+                ),
+                tooltip: isActive == false ? 'Publish' : 'Unpublish',
+                onPressed: onToggleActive,
+              ),
             IconButton(
               icon: const Icon(Icons.edit_outlined, color: AppColors.navy),
               tooltip: 'Edit',

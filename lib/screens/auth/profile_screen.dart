@@ -4,6 +4,7 @@ import 'package:mpsc_combine_ai/screens/bookmarks/bookmarks_screen.dart';
 import 'package:mpsc_combine_ai/screens/certificates/certificates_screen.dart';
 import 'package:mpsc_combine_ai/screens/my_performance_screen.dart';
 import 'package:mpsc_combine_ai/screens/study_planner_screen.dart';
+import 'package:mpsc_combine_ai/screens/weakness/ai_weakness_tracker_screen.dart';
 import 'package:mpsc_combine_ai/services/auth_service.dart';
 import 'package:mpsc_combine_ai/services/profile_repository.dart';
 import 'package:mpsc_combine_ai/theme/app_colors.dart';
@@ -285,6 +286,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         ),
                         const Divider(height: 1),
                         ListTile(
+                          leading: const Icon(Icons.warning_amber_rounded, color: AppColors.orange),
+                          title: const Text('कमकुवत विषय ट्रॅकर'),
+                          trailing: const Icon(Icons.chevron_right_rounded),
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => const AiWeaknessTrackerScreen(),
+                            ),
+                          ),
+                        ),
+                        const Divider(height: 1),
+                        ListTile(
                           leading: const Icon(Icons.bookmark_rounded, color: AppColors.navy),
                           title: const Text('बुकमार्क्स'),
                           trailing: const Icon(Icons.chevron_right_rounded),
@@ -321,7 +333,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         ListTile(
                           leading: const Icon(Icons.settings_rounded, color: AppColors.navy),
                           title: const Text('सेटिंग्ज'),
-                          subtitle: const Text('Study goals & planner'),
+                          subtitle: const Text('Daily planner & weekly timetable'),
                           trailing: const Icon(Icons.chevron_right_rounded),
                           onTap: () => Navigator.of(context).push(
                             MaterialPageRoute<void>(

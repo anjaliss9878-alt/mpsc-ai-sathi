@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:mpsc_combine_ai/models/exam_item.dart';
 import 'package:mpsc_combine_ai/utils/json_list.dart';
 
 /// A subject/topic area (e.g. राज्यशास्त्र) stored in Firestore at
@@ -13,6 +14,7 @@ class SubjectItem {
     this.imageUrl = '',
     this.slug = '',
     this.nameEn = '',
+    this.examId = kDefaultExamId,
     this.published = true,
     this.updatedAt,
   });
@@ -34,6 +36,9 @@ class SubjectItem {
 
   /// Optional English label for admin search / internal display.
   final String nameEn;
+
+  /// Parent exam (`exams/{examId}`). Default is MPSC Combine.
+  final String examId;
 
   /// When false, students do not see this subject. Missing field ⇒ published.
   final bool published;
@@ -58,6 +63,9 @@ class SubjectItem {
       imageUrl: map['imageUrl'] as String? ?? '',
       slug: map['slug'] as String? ?? '',
       nameEn: map['nameEn'] as String? ?? '',
+      examId: (map['examId'] as String?)?.trim().isNotEmpty == true
+          ? (map['examId'] as String).trim()
+          : kDefaultExamId,
       published: asBool(map['published'], defaultValue: true),
       updatedAt: _parseUpdatedAt(map['updatedAt']),
     );
@@ -74,6 +82,7 @@ class SubjectItem {
       'order': order,
       'imageUrl': imageUrl,
       'slug': slug,
+      'examId': examId.isEmpty ? kDefaultExamId : examId,
       'published': published,
       'updatedAt': now,
     };
@@ -87,6 +96,7 @@ class SubjectItem {
     String? imageUrl,
     String? slug,
     String? nameEn,
+    String? examId,
     bool? published,
     DateTime? updatedAt,
   }) {
@@ -99,6 +109,7 @@ class SubjectItem {
       imageUrl: imageUrl ?? this.imageUrl,
       slug: slug ?? this.slug,
       nameEn: nameEn ?? this.nameEn,
+      examId: examId ?? this.examId,
       published: published ?? this.published,
       updatedAt: updatedAt ?? this.updatedAt,
     );

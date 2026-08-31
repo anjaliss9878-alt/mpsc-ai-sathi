@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
 import 'package:mpsc_combine_ai/services/ai_backend_base.dart';
+import 'package:mpsc_combine_ai/services/backend_request_headers.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/ai_chapter_debug.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/chapter_lesson_loader.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/gemini_rest_client.dart';
@@ -117,9 +118,13 @@ class GeminiLessonGenerationService implements LessonGenerationService {
           'error': classifyAiGenerationFailure(e),
           'web': kIsWeb,
         });
+        if (kIsWeb) {
+          throw LessonGenerationException(classifyAiGenerationFailure(e));
+        }
       }
     } else if (kIsWeb) {
-      aiChapterLog('backend_unavailable_fallback_direct', {'base': _workerBase});
+      aiChapterLog('backend_unavailable', {'base': _workerBase});
+      throw const LessonGenerationException('network error');
     }
 
     final userPrompt = chapterUserPrompt(topic: question, subject: style);
@@ -195,7 +200,7 @@ class GeminiLessonGenerationService implements LessonGenerationService {
       response = await _client
           .post(
             uri,
-            headers: {'Content-Type': 'application/json'},
+            headers: await backendJsonHeaders(),
             body: jsonEncode({
               'topic': question,
               'subjectContext': subjectContext ?? '',

@@ -8,6 +8,7 @@ import 'package:mpsc_combine_ai/screens/auth/auth_gate.dart';
 import 'package:mpsc_combine_ai/screens/auth/profile_screen.dart';
 import 'package:mpsc_combine_ai/screens/courses/courses_tab_screen.dart';
 import 'package:mpsc_combine_ai/screens/current_affairs_screen.dart';
+import 'package:mpsc_combine_ai/screens/home/home_main_features.dart';
 import 'package:mpsc_combine_ai/screens/home/home_upgrade_sections.dart';
 import 'package:mpsc_combine_ai/screens/live_classes/live_classes_home_screen.dart';
 import 'package:mpsc_combine_ai/screens/mcq_practice_screen.dart';
@@ -189,27 +190,27 @@ class _MainShellState extends State<MainShell> {
           BottomNavigationBarItem(
             icon: Icon(Icons.home_outlined),
             activeIcon: Icon(Icons.home_rounded),
-            label: 'मुख्यपृष्ठ',
+            label: 'Home',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.menu_book_outlined),
             activeIcon: Icon(Icons.menu_book_rounded),
-            label: 'अभ्यासक्रम',
+            label: 'Courses',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.psychology_outlined),
             activeIcon: Icon(Icons.psychology_rounded),
-            label: 'AI शिक्षक',
+            label: 'AI Teacher',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.fact_check_outlined),
             activeIcon: Icon(Icons.fact_check_rounded),
-            label: 'चाचण्या',
+            label: 'Tests',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.person_outline_rounded),
             activeIcon: Icon(Icons.person_rounded),
-            label: 'प्रोफाइल',
+            label: 'Profile',
           ),
         ],
       ),
@@ -325,12 +326,12 @@ class _HomeScreenState extends State<HomeScreen> {
   List<FeatureItem> _buildFeatures() {
     return [
       FeatureItem(
-        title: 'AI शिक्षक',
+        title: 'AI Teacher',
         icon: Icons.psychology_rounded,
         onTap: () => widget.onNavigateToTab(2),
       ),
       FeatureItem(
-        title: 'अभ्यासक्रम',
+        title: 'Courses',
         icon: Icons.menu_book_rounded,
         onTap: () => widget.onNavigateToTab(1),
       ),
@@ -340,12 +341,17 @@ class _HomeScreenState extends State<HomeScreen> {
         screen: SubjectNotesScreen(),
       ),
       const FeatureItem(
-        title: 'MCQ Tests',
+        title: 'Practice',
         icon: Icons.quiz_rounded,
         screen: McqPracticeScreen(),
       ),
+      FeatureItem(
+        title: 'Tests',
+        icon: Icons.fact_check_rounded,
+        onTap: () => widget.onNavigateToTab(3),
+      ),
       const FeatureItem(
-        title: 'PYQs',
+        title: 'PYQ',
         icon: Icons.history_edu_rounded,
         screen: PyqScreen(),
       ),
@@ -427,203 +433,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     horizontalPadding,
                     0,
                   ),
-                  child: Builder(
-                    builder: (context) {
-                      final uid = authService.currentUser?.uid;
-                      if (uid == null) {
-                        return _StudyGoalCard(
-                          goal: StudyGoal.emptyForToday(),
-                          streakDays: 0,
-                          onTap: () =>
-                              widget.onSnack('Sign in to track study goals.'),
-                        );
-                      }
-                      return StreamBuilder<StudyGoal>(
-                        stream: studentProgressRepository.watchTodayGoal(uid),
-                        builder: (context, snapshot) {
-                          final goal =
-                              snapshot.data ?? StudyGoal.emptyForToday();
-                          return StreamBuilder<int>(
-                            stream:
-                                studentProgressRepository.watchStudyStreak(uid),
-                            builder: (context, streakSnap) {
-                              return _StudyGoalCard(
-                                goal: goal,
-                                streakDays: streakSnap.data ?? 0,
-                                onTap: () {
-                                  Navigator.of(context).push(
-                                    MaterialPageRoute<void>(
-                                      builder: (_) => const StudyGoalScreen(),
-                                    ),
-                                  );
-                                },
-                              );
-                            },
-                          );
-                        },
-                      );
-                    },
-                  ),
-                ),
-              ),
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: EdgeInsets.fromLTRB(
-                    horizontalPadding,
-                    28,
-                    horizontalPadding,
-                    0,
-                  ),
-                        child: const _SectionTitle(title: 'शिकायला सुरू करा'),
-                ),
-              ),
-              SliverPadding(
-                padding: EdgeInsets.fromLTRB(
-                  horizontalPadding,
-                  12,
-                  horizontalPadding,
-                  0,
-                ),
-                sliver: SliverGrid(
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
-                    mainAxisSpacing: 12,
-                    crossAxisSpacing: 12,
-                    childAspectRatio: 1.05,
-                  ),
-                  delegate: SliverChildBuilderDelegate(
-                    (context, index) {
-                      final feature = features[index];
-                      return FeatureCard(
-                        feature: feature,
-                        onTap: () {
-                          if (feature.onTap != null) {
-                            feature.onTap!();
-                          } else {
-                            Navigator.of(context).push(
-                              MaterialPageRoute<void>(
-                                builder: (_) => feature.screen!,
-                              ),
-                            );
-                          }
-                        },
-                      );
-                    },
-                    childCount: features.length,
-                  ),
-                ),
-              ),
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: EdgeInsets.fromLTRB(
-                    horizontalPadding,
-                    28,
-                    horizontalPadding,
-                    0,
-                  ),
-                  child: Row(
-                    children: [
-                      const Expanded(
-                        child: _SectionTitle(title: 'विषय (Live)'),
-                      ),
-                      TextButton(
-                        onPressed: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute<void>(
-                              builder: (_) => const SubjectNotesScreen(),
-                            ),
-                          );
-                        },
-                        child: const Text('सर्व पहा'),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              SliverToBoxAdapter(
-                child: SizedBox(
-                  height: 112,
-                  child: StreamBuilder<List<SubjectItem>>(
-                    stream: notesRepository.watchPublishedSubjects(),
-                    builder: (context, snapshot) {
-                      if (snapshot.hasError) {
-                        return Padding(
-                          padding: EdgeInsets.fromLTRB(
-                            horizontalPadding,
-                            12,
-                            horizontalPadding,
-                            0,
-                          ),
-                          child: Text(
-                            'विषय सध्या दाखवता आले नाहीत. कृपया पुन्हा प्रयत्न करा.',
-                            style: const TextStyle(color: AppColors.textSecondary),
-                          ),
-                        );
-                      }
-                      final subjects = snapshot.data ?? const <SubjectItem>[];
-                      if (!snapshot.hasData) {
-                        return const Center(
-                          child: SizedBox(
-                            width: 28,
-                            height: 28,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                        );
-                      }
-                      if (subjects.isEmpty) {
-                        return Padding(
-                          padding: EdgeInsets.fromLTRB(
-                            horizontalPadding,
-                            12,
-                            horizontalPadding,
-                            0,
-                          ),
-                          child: Text(
-                            'अजून प्रकाशित विषय नाहीत. Admin Panel मधून Published करा.',
-                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                  color: AppColors.textSecondary,
-                                ),
-                          ),
-                        );
-                      }
-                      return ListView.separated(
-                        padding: EdgeInsets.fromLTRB(
-                          horizontalPadding,
-                          12,
-                          horizontalPadding,
-                          0,
-                        ),
-                        scrollDirection: Axis.horizontal,
-                        itemCount: subjects.length,
-                        separatorBuilder: (_, _) => const SizedBox(width: 10),
-                        itemBuilder: (context, index) {
-                          final subject = subjects[index];
-                          return ActionChip(
-                            avatar: Icon(subject.icon, size: 18, color: AppColors.navy),
-                            label: Text(subject.title),
-                            onPressed: () {
-                              Navigator.of(context).push(
-                                MaterialPageRoute<void>(
-                                  builder: (_) => TopicListScreen(subject: subject),
-                                ),
-                              );
-                            },
-                          );
-                        },
-                      );
-                    },
-                  ),
-                ),
-              ),
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: EdgeInsets.fromLTRB(
-                    horizontalPadding,
-                    28,
-                    horizontalPadding,
-                    0,
-                  ),
-                  child: const _SectionTitle(title: 'अभ्यास सुरू ठेवा'),
+                  child: const _SectionTitle(title: 'Continue Learning'),
                 ),
               ),
               SliverToBoxAdapter(
@@ -644,8 +454,8 @@ class _HomeScreenState extends State<HomeScreen> {
                           children: [
                             ContinueLearningCard(
                               item: const ContinueItem(
-                                title: 'अभ्यास सुरू करा',
-                                subtitle: 'अभ्यासक्रम उघडा',
+                                title: 'Start Learning',
+                                subtitle: 'Open Courses',
                                 progress: 0,
                                 icon: Icons.school_rounded,
                                 snackMessage: '',
@@ -664,22 +474,22 @@ class _HomeScreenState extends State<HomeScreen> {
                           final items = sessions.isEmpty
                               ? const [
                                   ContinueItem(
-                                    title: 'विषयवार नोट्स',
-                                    subtitle: 'प्रकरण सुरू करा',
+                                    title: 'Subject Notes',
+                                    subtitle: 'Start a chapter',
                                     progress: 0,
                                     icon: Icons.library_books_rounded,
                                     snackMessage: '',
                                   ),
                                   ContinueItem(
                                     title: 'MCQ Tests',
-                                    subtitle: 'सराव प्रश्न सोडवा',
+                                    subtitle: 'Practice questions',
                                     progress: 0,
                                     icon: Icons.quiz_rounded,
                                     snackMessage: '',
                                   ),
                                   ContinueItem(
-                                    title: 'AI शिक्षक',
-                                    subtitle: 'धडा सुरू ठेवा',
+                                    title: 'AI Teacher',
+                                    subtitle: 'Continue the lesson',
                                     progress: 0,
                                     icon: Icons.co_present_rounded,
                                     snackMessage: '',
@@ -747,6 +557,213 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
               SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    horizontalPadding,
+                    24,
+                    horizontalPadding,
+                    0,
+                  ),
+                  child: const HomeMainFeaturesSection(),
+                ),
+              ),
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    horizontalPadding,
+                    24,
+                    horizontalPadding,
+                    0,
+                  ),
+                  child: Builder(
+                    builder: (context) {
+                      final uid = authService.currentUser?.uid;
+                      if (uid == null) {
+                        return _StudyGoalCard(
+                          goal: StudyGoal.emptyForToday(),
+                          streakDays: 0,
+                          onTap: () =>
+                              widget.onSnack('Sign in to track study goals.'),
+                        );
+                      }
+                      return StreamBuilder<StudyGoal>(
+                        stream: studentProgressRepository.watchTodayGoal(uid),
+                        builder: (context, snapshot) {
+                          final goal =
+                              snapshot.data ?? StudyGoal.emptyForToday();
+                          return StreamBuilder<int>(
+                            stream:
+                                studentProgressRepository.watchStudyStreak(uid),
+                            builder: (context, streakSnap) {
+                              return _StudyGoalCard(
+                                goal: goal,
+                                streakDays: streakSnap.data ?? 0,
+                                onTap: () {
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute<void>(
+                                      builder: (_) => const StudyGoalScreen(),
+                                    ),
+                                  );
+                                },
+                              );
+                            },
+                          );
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ),
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    horizontalPadding,
+                    28,
+                    horizontalPadding,
+                    0,
+                  ),
+                        child: const _SectionTitle(title: 'Start Learning'),
+                ),
+              ),
+              SliverPadding(
+                padding: EdgeInsets.fromLTRB(
+                  horizontalPadding,
+                  12,
+                  horizontalPadding,
+                  0,
+                ),
+                sliver: SliverGrid(
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2,
+                    mainAxisSpacing: 12,
+                    crossAxisSpacing: 12,
+                    childAspectRatio: 1.05,
+                  ),
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) {
+                      final feature = features[index];
+                      return FeatureCard(
+                        feature: feature,
+                        onTap: () {
+                          if (feature.onTap != null) {
+                            feature.onTap!();
+                          } else {
+                            Navigator.of(context).push(
+                              MaterialPageRoute<void>(
+                                builder: (_) => feature.screen!,
+                              ),
+                            );
+                          }
+                        },
+                      );
+                    },
+                    childCount: features.length,
+                  ),
+                ),
+              ),
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    horizontalPadding,
+                    28,
+                    horizontalPadding,
+                    0,
+                  ),
+                  child: Row(
+                    children: [
+                      const Expanded(
+                        child: _SectionTitle(title: 'Subjects'),
+                      ),
+                      TextButton(
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => const SubjectNotesScreen(),
+                            ),
+                          );
+                        },
+                        child: const Text('See All'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              SliverToBoxAdapter(
+                child: SizedBox(
+                  height: 112,
+                  child: StreamBuilder<List<SubjectItem>>(
+                    stream: notesRepository.watchPublishedSubjects(),
+                    builder: (context, snapshot) {
+                      if (snapshot.hasError) {
+                        return Padding(
+                          padding: EdgeInsets.fromLTRB(
+                            horizontalPadding,
+                            12,
+                            horizontalPadding,
+                            0,
+                          ),
+                          child: Text(
+                            'Subjects could not be loaded. Please try again.',
+                            style: const TextStyle(color: AppColors.textSecondary),
+                          ),
+                        );
+                      }
+                      final subjects = snapshot.data ?? const <SubjectItem>[];
+                      if (!snapshot.hasData) {
+                        return const Center(
+                          child: SizedBox(
+                            width: 28,
+                            height: 28,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        );
+                      }
+                      if (subjects.isEmpty) {
+                        return Padding(
+                          padding: EdgeInsets.fromLTRB(
+                            horizontalPadding,
+                            12,
+                            horizontalPadding,
+                            0,
+                          ),
+                          child: Text(
+                            'No published subjects yet. Publish them from the Admin Panel.',
+                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                  color: AppColors.textSecondary,
+                                ),
+                          ),
+                        );
+                      }
+                      return ListView.separated(
+                        padding: EdgeInsets.fromLTRB(
+                          horizontalPadding,
+                          12,
+                          horizontalPadding,
+                          0,
+                        ),
+                        scrollDirection: Axis.horizontal,
+                        itemCount: subjects.length,
+                        separatorBuilder: (_, _) => const SizedBox(width: 10),
+                        itemBuilder: (context, index) {
+                          final subject = subjects[index];
+                          return ActionChip(
+                            avatar: Icon(subject.icon, size: 18, color: AppColors.navy),
+                            label: Text(subject.title),
+                            onPressed: () {
+                              Navigator.of(context).push(
+                                MaterialPageRoute<void>(
+                                  builder: (_) => TopicListScreen(subject: subject),
+                                ),
+                              );
+                            },
+                          );
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ),
+              SliverToBoxAdapter(
                 child: HomeUpgradeSections(horizontalPadding: horizontalPadding),
               ),
               const SliverToBoxAdapter(child: SizedBox(height: 24)),
@@ -757,6 +774,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 }
+
 
 // ─── Reusable Widgets ─────────────────────────────────────────────────────────
 
@@ -929,7 +947,7 @@ class _WelcomeSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final name = (studentName != null && studentName!.trim().isNotEmpty)
         ? studentName!.trim()
-        : 'विद्यार्थी';
+        : 'Student';
     final hasTargetExam = targetExam != null && targetExam!.trim().isNotEmpty;
 
     return Padding(
@@ -942,7 +960,7 @@ class _WelcomeSection extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'नमस्कार, $name!',
+                  'Hello, $name!',
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                         color: AppColors.textPrimary,
                         fontWeight: FontWeight.w700,
@@ -972,7 +990,7 @@ class _WelcomeSection extends StatelessWidget {
                         const SizedBox(width: 4),
                         Flexible(
                           child: Text(
-                            'लक्ष्य: ${targetExam!.trim()}',
+                            'Target: ${targetExam!.trim()}',
                             style:
                                 Theme.of(context).textTheme.bodySmall?.copyWith(
                                       color: AppColors.sky,
@@ -987,7 +1005,7 @@ class _WelcomeSection extends StatelessWidget {
                   )
                 else
                   Text(
-                    'MPSC Combine परीक्षा जिंकण्यासाठी तयार आहात?',
+                    'Ready to crack the MPSC Combine exam?',
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                           color: AppColors.textSecondary,
                         ),
@@ -1012,7 +1030,7 @@ class _WelcomeSection extends StatelessWidget {
                     Icon(Icons.play_arrow_rounded, color: Colors.white, size: 20),
                     SizedBox(width: 4),
                     Text(
-                      'सुरू करा',
+                      'Start',
                       style: TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.w600,
@@ -1055,7 +1073,7 @@ class _SearchBar extends StatelessWidget {
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
-                  'विषय, नोट्स किंवा प्रश्न शोधा',
+                  'Search subjects, notes, or questions',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         color: AppColors.textSecondary,
                       ),
@@ -1113,7 +1131,7 @@ class _StudyGoalCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      "आजचे अभ्यास लक्ष्य",
+                      "Today's Study Goal",
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
                             fontWeight: FontWeight.w700,
                             color: AppColors.textPrimary,
@@ -1123,8 +1141,8 @@ class _StudyGoalCard extends StatelessWidget {
                     ),
                     Text(
                       streakDays > 0
-                          ? '$completed / $total पूर्ण · $streakDays दिवस स्ट्रीक'
-                          : '$completed / $total कार्य पूर्ण',
+                          ? '$completed / $total complete · $streakDays-day streak'
+                          : '$completed / $total tasks complete',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                             color: AppColors.textSecondary,
                           ),
@@ -1158,10 +1176,10 @@ class _StudyGoalCard extends StatelessWidget {
             spacing: 8,
             runSpacing: 8,
             children: [
-              _GoalChip(label: 'नोट्स', done: goal.notesDone),
+              _GoalChip(label: 'Notes', done: goal.notesDone),
               _GoalChip(label: 'MCQ', done: goal.mcqsDone),
-              _GoalChip(label: 'पुनरावृत्ती', done: goal.revisionDone),
-              _GoalChip(label: 'चाचणी', done: goal.testDone),
+              _GoalChip(label: 'Revision', done: goal.revisionDone),
+              _GoalChip(label: 'Test', done: goal.testDone),
             ],
           ),
         ],
@@ -1307,8 +1325,9 @@ class FeatureCard extends StatelessWidget {
               Text(
                 feature.title,
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.w600,
+                      fontWeight: FontWeight.w700,
                       color: AppColors.textPrimary,
+                      height: 1.25,
                     ),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
@@ -1378,8 +1397,9 @@ class ContinueLearningCard extends StatelessWidget {
                 Text(
                   item.title,
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
+                        fontWeight: FontWeight.w700,
                         color: AppColors.textPrimary,
+                        height: 1.25,
                       ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,

@@ -4,14 +4,18 @@ import 'package:mpsc_combine_ai/services/ai_teacher_system/media_bytes_cache.dar
 import 'package:mpsc_combine_ai/services/pdf_cache_service.dart';
 import 'package:mpsc_combine_ai/services/storage_service.dart';
 import 'package:mpsc_combine_ai/theme/app_colors.dart';
+import 'package:mpsc_combine_ai/utils/firebase_storage_url.dart';
 import 'package:mpsc_combine_ai/utils/pdf_blob_open.dart';
 import 'package:mpsc_combine_ai/utils/student_media.dart';
+import 'package:mpsc_combine_ai/widgets/pdf_web_fallback.dart';
 import 'package:pdfrx/pdfrx.dart';
 
 /// Compact in-app PDF preview with a fullscreen reader.
 ///
-/// Bytes are loaded via Storage `getDownloadURL` / `getData` so Flutter Web
-/// never CORS-fetches the public URL. Storage URLs are never shown.
+/// Prefers already-uploaded bytes (no second network hop). If bytes cannot be
+/// fetched on Flutter Web (CORS / `getData`), the original Storage download
+/// URL is shown in a browser iframe and via **Open PDF in new tab**. RAG
+/// indexing is never required.
 class TopicPdfViewer extends StatefulWidget {
   const TopicPdfViewer({
     super.key,
@@ -19,12 +23,18 @@ class TopicPdfViewer extends StatefulWidget {
     required this.fileName,
     this.title = 'PDF Notes',
     this.height = 220,
+    this.storagePath = '',
+    this.initialBytes,
+    this.showDetailedErrors = false,
   });
 
   final String url;
   final String fileName;
   final String title;
   final double height;
+  final String storagePath;
+  final Uint8List? initialBytes;
+  final bool showDetailedErrors;
 
   @override
   State<TopicPdfViewer> createState() => _TopicPdfViewerState();
@@ -45,12 +55,38 @@ class _TopicPdfViewerState extends State<TopicPdfViewer> {
   @override
   void didUpdateWidget(covariant TopicPdfViewer oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.url != widget.url) _load();
+    if (oldWidget.url != widget.url ||
+        oldWidget.storagePath != widget.storagePath ||
+        oldWidget.initialBytes != widget.initialBytes) {
+      _load();
+    }
+  }
+
+  String _formatError(Object error) {
+    if (widget.showDetailedErrors) return error.toString();
+    return studentFacingMediaError(error);
+  }
+
+  void _cacheBytes(Uint8List bytes) {
+    if (bytes.isEmpty) return;
+    final url = widget.url.trim();
+    final path = widget.storagePath.trim();
+    if (url.isNotEmpty) mediaBytesCache.write(url, bytes);
+    if (path.isNotEmpty) mediaBytesCache.write(path, bytes);
+  }
+
+  String _bestOpenUrl() {
+    final resolved = _resolvedUrl?.trim() ?? '';
+    if (resolved.contains('://')) return resolved;
+    final stored = widget.url.trim();
+    if (stored.contains('://')) return stored;
+    return stored;
   }
 
   Future<void> _load() async {
     final stored = widget.url.trim();
-    if (stored.isEmpty) {
+    final path = widget.storagePath.trim();
+    if (stored.isEmpty && path.isEmpty) {
       setState(() {
         _loading = false;
         _bytes = null;
@@ -62,39 +98,81 @@ class _TopicPdfViewerState extends State<TopicPdfViewer> {
     setState(() {
       _loading = true;
       _error = null;
-      _bytes = null;
     });
-    try {
-      final cached = mediaBytesCache.read(stored);
-      if (cached != null && cached.isNotEmpty) {
-        if (!mounted) return;
-        setState(() {
-          _bytes = cached;
-          _resolvedUrl = null;
-          _loading = false;
-          _error = null;
-        });
-        return;
-      }
-      final bytes = await storageService.downloadBytes(stored);
-      mediaBytesCache.write(stored, bytes);
-      if (!mounted) return;
-      setState(() {
-        _resolvedUrl = null;
-        _bytes = bytes;
-        _loading = false;
-        _error = bytes.isEmpty
-            ? 'Could not load this file. Please try again.'
-            : null;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _error = studentFacingMediaError(e);
-        _bytes = null;
-      });
+
+    Uint8List? bytes = widget.initialBytes;
+    if (bytes == null || bytes.isEmpty) {
+      bytes = mediaBytesCache.read(stored);
     }
+    if ((bytes == null || bytes.isEmpty) && path.isNotEmpty) {
+      bytes = mediaBytesCache.read(path);
+    }
+
+    String openUrl = stored.contains('://') ? stored : '';
+    String? loadError;
+
+    if (bytes != null && bytes.isNotEmpty) {
+      _cacheBytes(bytes);
+      if (openUrl.isEmpty && path.isNotEmpty) {
+        try {
+          openUrl = await storageService.resolveDownloadUrl(path);
+        } catch (_) {}
+      }
+      if (!mounted) return;
+      setState(() {
+        _bytes = bytes;
+        _resolvedUrl = openUrl.isNotEmpty ? openUrl : null;
+        _loading = false;
+        _error = null;
+      });
+      return;
+    }
+
+    final loc = path.isNotEmpty ? path : stored;
+    try {
+      final downloaded = await storageService.downloadBytes(loc);
+      if (downloaded.isNotEmpty) {
+        bytes = downloaded;
+        _cacheBytes(downloaded);
+      }
+    } catch (e) {
+      loadError = _formatError(e);
+      debugPrint('[TopicPdfViewer] downloadBytes: $e');
+    }
+
+    if (openUrl.isEmpty) {
+      try {
+        openUrl = await storageService.resolveDownloadUrl(loc);
+      } catch (e) {
+        debugPrint('[TopicPdfViewer] resolveDownloadUrl: $e');
+        loadError ??= _formatError(e);
+      }
+    }
+
+    if (!mounted) return;
+    final billingBlocked = (loadError ?? '').contains('HTTP 402') ||
+        (loadError ?? '').toLowerCase().contains('billing');
+    final canIframe = !billingBlocked &&
+        kIsWeb &&
+        openUrl.contains('://') &&
+        isValidFirebaseDownloadUrl(openUrl);
+    setState(() {
+      _bytes = bytes;
+      _resolvedUrl = openUrl.isNotEmpty ? openUrl : null;
+      _loading = false;
+      if (bytes != null && bytes.isNotEmpty) {
+        _error = null;
+      } else if (canIframe) {
+        // Browser iframe / new tab still open the original Storage file.
+        _error = widget.showDetailedErrors
+            ? '${loadError ?? 'Could not fetch PDF bytes in-app.'} '
+                'Showing the original file from Storage instead.'
+            : null;
+      } else {
+        _error = loadError ??
+            'Could not load this PDF. No valid Firebase Storage URL was found.';
+      }
+    });
   }
 
   String get _heading {
@@ -103,25 +181,35 @@ class _TopicPdfViewerState extends State<TopicPdfViewer> {
     return widget.title;
   }
 
-  Future<void> _openExternalPdf() async {
+  Future<void> _openInNewTab() async {
     try {
-      var bytes = _bytes;
-      bytes ??= await storageService.downloadBytes(widget.url);
-      if (bytes.isEmpty) {
-        throw StateError('empty');
-      }
-      if (kIsWeb) {
-        await openPdfBytes(bytes, widget.fileName);
+      if (kIsWeb && _bytes != null && _bytes!.isNotEmpty) {
+        await openPdfBytes(_bytes!, widget.fileName);
         return;
       }
-      await pdfCacheService.openPdfFromBytes(
-        bytes: bytes,
+      var url = _bestOpenUrl();
+      if (url.isEmpty || !url.contains('://')) {
+        final loc =
+            widget.storagePath.trim().isNotEmpty ? widget.storagePath : widget.url;
+        url = await storageService.resolveDownloadUrl(loc);
+      }
+      if (url.isEmpty || !url.contains('://')) {
+        throw StateError(
+          'No valid PDF URL. Upload the file again or Save Draft first.',
+        );
+      }
+      if (kIsWeb && _bytes != null && _bytes!.isNotEmpty) {
+        await openPdfBytes(_bytes!, widget.fileName);
+        return;
+      }
+      await pdfCacheService.openPdf(
+        url: url,
         fileName: widget.fileName.isNotEmpty ? widget.fileName : 'notes.pdf',
       );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(studentFacingMediaError(e))),
+        SnackBar(content: Text(_formatError(e))),
       );
     }
   }
@@ -132,16 +220,27 @@ class _TopicPdfViewerState extends State<TopicPdfViewer> {
         builder: (_) => TopicPdfReaderPage(
           title: _heading,
           bytes: _bytes,
-          resolvedUrl: _resolvedUrl,
-          onOpenPdf: _openExternalPdf,
+          resolvedUrl: _bestOpenUrl(),
+          showDetailedErrors: widget.showDetailedErrors,
+          error: _error,
+          onOpenPdf: _openInNewTab,
         ),
       ),
     );
   }
 
+  bool get _canOpen {
+    if (_loading) return false;
+    if (_bytes != null && _bytes!.isNotEmpty) return true;
+    final url = _bestOpenUrl();
+    return url.contains('://');
+  }
+
   @override
   Widget build(BuildContext context) {
-    if (widget.url.trim().isEmpty) return const SizedBox.shrink();
+    if (widget.url.trim().isEmpty && widget.storagePath.trim().isEmpty) {
+      return const SizedBox.shrink();
+    }
 
     return Container(
       decoration: BoxDecoration(
@@ -189,7 +288,7 @@ class _TopicPdfViewerState extends State<TopicPdfViewer> {
                   ),
                 ),
                 TextButton(
-                  onPressed: _loading ? null : _openReader,
+                  onPressed: _canOpen ? _openReader : null,
                   child: const Text('Open'),
                 ),
               ],
@@ -200,45 +299,54 @@ class _TopicPdfViewerState extends State<TopicPdfViewer> {
             height: widget.height,
             child: Material(
               color: const Color(0xFFF7F7F5),
-              child: InkWell(
-                onTap: _loading ? null : _openReader,
-                child: _PreviewBody(
-                  loading: _loading,
-                  bytes: _bytes,
-                  resolvedUrl: _resolvedUrl,
-                  sourceName: 'notes-pdf-preview-${widget.url.hashCode}',
-                  error: _error,
-                  onRetry: _load,
-                ),
+              child: _PreviewBody(
+                loading: _loading,
+                bytes: _bytes,
+                resolvedUrl: _bestOpenUrl(),
+                sourceName: 'notes-pdf-preview-${widget.url.hashCode}',
+                error: _error,
+                showDetailedErrors: widget.showDetailedErrors,
+                onRetry: _load,
+                onOpenInNewTab: _canOpen ? _openInNewTab : null,
+                onOpenReader: _canOpen ? _openReader : null,
               ),
             ),
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
-            child: Row(
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
               children: [
-                Expanded(
-                  child: FilledButton.icon(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: AppColors.navy,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
+                FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppColors.navy,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 12,
+                      horizontal: 16,
                     ),
-                    onPressed: _loading || _bytes == null ? _openExternalPdf : _openReader,
-                    icon: const Icon(Icons.fullscreen_rounded, size: 20),
-                    label: Text(_bytes == null ? 'Open PDF' : 'Read fullscreen'),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                   ),
+                  onPressed: _canOpen
+                      ? () {
+                          if (_bytes != null && _bytes!.isNotEmpty) {
+                            _openReader();
+                          } else {
+                            _openInNewTab();
+                          }
+                        }
+                      : null,
+                  icon: const Icon(Icons.picture_as_pdf_rounded, size: 20),
+                  label: const Text('Open PDF'),
                 ),
-                if (_error != null) ...[
-                  const SizedBox(width: 8),
-                  OutlinedButton(
-                    onPressed: _openExternalPdf,
-                    child: const Text('Open PDF'),
-                  ),
-                ],
+                OutlinedButton.icon(
+                  onPressed: _canOpen ? _openInNewTab : null,
+                  icon: const Icon(Icons.open_in_new_rounded, size: 18),
+                  label: const Text('Open PDF in new tab'),
+                ),
               ],
             ),
           ),
@@ -255,12 +363,16 @@ class TopicPdfReaderPage extends StatefulWidget {
     required this.title,
     this.bytes,
     this.resolvedUrl,
+    this.error,
+    this.showDetailedErrors = false,
     this.onOpenPdf,
   });
 
   final String title;
   final Uint8List? bytes;
   final String? resolvedUrl;
+  final String? error;
+  final bool showDetailedErrors;
   final Future<void> Function()? onOpenPdf;
 
   @override
@@ -319,26 +431,31 @@ class _TopicPdfReaderPageState extends State<TopicPdfReaderPage> {
           overflow: TextOverflow.ellipsis,
         ),
         actions: [
-          IconButton(
-            tooltip: 'Zoom in',
-            onPressed: () {
-              if (!_controller.isReady) return;
-              _controller.zoomUp();
-            },
-            icon: const Icon(Icons.zoom_in_rounded),
-          ),
-          IconButton(
-            tooltip: 'Zoom out',
-            onPressed: () {
-              if (!_controller.isReady) return;
-              _controller.zoomDown();
-            },
-            icon: const Icon(Icons.zoom_out_rounded),
-          ),
+          if (widget.bytes != null && widget.bytes!.isNotEmpty) ...[
+            IconButton(
+              tooltip: 'Zoom in',
+              onPressed: () {
+                if (!_controller.isReady) return;
+                _controller.zoomUp();
+              },
+              icon: const Icon(Icons.zoom_in_rounded),
+            ),
+            IconButton(
+              tooltip: 'Zoom out',
+              onPressed: () {
+                if (!_controller.isReady) return;
+                _controller.zoomDown();
+              },
+              icon: const Icon(Icons.zoom_out_rounded),
+            ),
+          ],
           if (widget.onOpenPdf != null)
             TextButton(
               onPressed: widget.onOpenPdf,
-              child: const Text('Open PDF', style: TextStyle(color: Colors.white)),
+              child: const Text(
+                'Open PDF in new tab',
+                style: TextStyle(color: Colors.white),
+              ),
             ),
           if (_pageCount > 0)
             Center(
@@ -360,6 +477,9 @@ class _TopicPdfReaderPageState extends State<TopicPdfReaderPage> {
               resolvedUrl: widget.resolvedUrl,
               sourceName: 'notes-pdf-reader-${widget.title.hashCode}',
               controller: _controller,
+              error: widget.error,
+              showDetailedErrors: widget.showDetailedErrors,
+              onOpenInNewTab: widget.onOpenPdf,
             ),
           ),
           if (_pageCount > 1)
@@ -406,15 +526,21 @@ class _PreviewBody extends StatelessWidget {
     required this.resolvedUrl,
     required this.sourceName,
     required this.error,
+    required this.showDetailedErrors,
     required this.onRetry,
+    required this.onOpenInNewTab,
+    required this.onOpenReader,
   });
 
   final bool loading;
   final Uint8List? bytes;
-  final String? resolvedUrl;
+  final String resolvedUrl;
   final String sourceName;
   final String? error;
+  final bool showDetailedErrors;
   final VoidCallback onRetry;
+  final Future<void> Function()? onOpenInNewTab;
+  final VoidCallback? onOpenReader;
 
   @override
   Widget build(BuildContext context) {
@@ -423,37 +549,86 @@ class _PreviewBody extends StatelessWidget {
         child: CircularProgressIndicator(color: AppColors.orange),
       );
     }
-    return IgnorePointer(
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          _PdfDocumentView(
-            bytes: bytes,
-            resolvedUrl: resolvedUrl,
-            sourceName: sourceName,
-          ),
-          const Align(
-            alignment: Alignment.bottomCenter,
-            child: ColoredBox(
-              color: Color(0x990A1F44),
-              child: SizedBox(
-                width: double.infinity,
-                height: 36,
-                child: Center(
-                  child: Text(
-                    'Tap to read fullscreen',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 12,
+
+    final hasBytes = bytes != null && bytes!.isNotEmpty;
+    final hasIframe = kIsWeb &&
+        resolvedUrl.contains('://') &&
+        isValidFirebaseDownloadUrl(resolvedUrl);
+
+    if (hasBytes) {
+      return InkWell(
+        onTap: onOpenReader,
+        child: IgnorePointer(
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              _PdfDocumentView(
+                bytes: bytes,
+                resolvedUrl: resolvedUrl,
+                sourceName: sourceName,
+                error: error,
+                showDetailedErrors: showDetailedErrors,
+                onOpenInNewTab: onOpenInNewTab,
+              ),
+              const Align(
+                alignment: Alignment.bottomCenter,
+                child: ColoredBox(
+                  color: Color(0x990A1F44),
+                  child: SizedBox(
+                    width: double.infinity,
+                    height: 36,
+                    child: Center(
+                      child: Text(
+                        'Tap to read fullscreen',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 12,
+                        ),
+                      ),
                     ),
                   ),
                 ),
               ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (hasIframe) {
+      return Column(
+        children: [
+          if (error != null && error!.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+              child: Text(
+                error!,
+                textAlign: TextAlign.center,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: AppColors.textSecondary,
+                  fontSize: 12,
+                  height: 1.3,
+                ),
+              ),
+            ),
+          Expanded(
+            child: PdfWebFallback(
+              key: ValueKey(resolvedUrl),
+              downloadUrl: resolvedUrl,
+              height: 200,
             ),
           ),
         ],
-      ),
+      );
+    }
+
+    return _ErrorPane(
+      message: error ?? 'Could not load this PDF. Please try again.',
+      onRetry: onRetry,
+      onOpenInNewTab: onOpenInNewTab,
     );
   }
 }
@@ -464,12 +639,18 @@ class _PdfDocumentView extends StatelessWidget {
     required this.resolvedUrl,
     required this.sourceName,
     this.controller,
+    this.error,
+    this.showDetailedErrors = false,
+    this.onOpenInNewTab,
   });
 
   final Uint8List? bytes;
   final String? resolvedUrl;
   final String sourceName;
   final PdfViewerController? controller;
+  final String? error;
+  final bool showDetailedErrors;
+  final Future<void> Function()? onOpenInNewTab;
 
   @override
   Widget build(BuildContext context) {
@@ -480,27 +661,47 @@ class _PdfDocumentView extends StatelessWidget {
         controller: controller,
         params: PdfViewerParams(
           backgroundColor: const Color(0xFFF7F7F5),
-          errorBannerBuilder: (context, error, stack, ref) {
+          errorBannerBuilder: (context, err, stack, ref) {
             return _ErrorPane(
-              message: studentFacingMediaError(error),
+              message: showDetailedErrors
+                  ? err.toString()
+                  : studentFacingMediaError(err),
               onRetry: null,
+              onOpenInNewTab: onOpenInNewTab,
             );
           },
         ),
       );
     }
-    return const _ErrorPane(
-      message: 'Could not load this file. Please try again.',
+
+    final url = (resolvedUrl ?? '').trim();
+    if (kIsWeb && url.contains('://') && isValidFirebaseDownloadUrl(url)) {
+      return PdfWebFallback(
+        key: ValueKey(url),
+        downloadUrl: url,
+        height: 520,
+      );
+    }
+
+    return _ErrorPane(
+      message: error ??
+          'Could not load this PDF. Use Open PDF in new tab if the file is in Storage.',
       onRetry: null,
+      onOpenInNewTab: onOpenInNewTab,
     );
   }
 }
 
 class _ErrorPane extends StatelessWidget {
-  const _ErrorPane({required this.message, required this.onRetry});
+  const _ErrorPane({
+    required this.message,
+    required this.onRetry,
+    this.onOpenInNewTab,
+  });
 
   final String message;
   final VoidCallback? onRetry;
+  final Future<void> Function()? onOpenInNewTab;
 
   @override
   Widget build(BuildContext context) {
@@ -523,6 +724,14 @@ class _ErrorPane extends StatelessWidget {
                 onPressed: onRetry,
                 icon: const Icon(Icons.refresh_rounded, size: 18),
                 label: const Text('Try again'),
+              ),
+            ],
+            if (onOpenInNewTab != null) ...[
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: onOpenInNewTab,
+                icon: const Icon(Icons.open_in_new_rounded, size: 18),
+                label: const Text('Open PDF in new tab'),
               ),
             ],
           ],

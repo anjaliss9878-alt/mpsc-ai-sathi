@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:mpsc_combine_ai/utils/firebase_storage_url.dart' as storage_url;
 
 /// Progress of an in-flight upload, reported to the Admin Panel's upload
 /// progress bars.
@@ -15,6 +17,18 @@ class UploadProgress {
   final int totalBytes;
 
   double get fraction => totalBytes == 0 ? 0 : bytesTransferred / totalBytes;
+}
+
+class StorageUploadResult {
+  const StorageUploadResult({
+    required this.url,
+    required this.path,
+    required this.byteCount,
+  });
+
+  final String url;
+  final String path;
+  final int byteCount;
 }
 
 /// Thin wrapper around Firebase Storage used by every Admin Panel upload
@@ -63,13 +77,32 @@ class StorageService {
     void Function(UploadProgress progress)? onProgress,
   }) async {
     final path = _buildPath(folder: folder, fileName: fileName);
-    return uploadBytesAtPath(
+    final url = await uploadBytesAtPath(
       path: path,
       bytes: bytes,
       contentType: contentType ?? _contentTypeFor(fileName),
       onProgress: onProgress,
       debugLabel: fileName,
     );
+    return url;
+  }
+
+  Future<StorageUploadResult> uploadBytesDetailed({
+    required String folder,
+    required String fileName,
+    required Uint8List bytes,
+    String? contentType,
+    void Function(UploadProgress progress)? onProgress,
+  }) async {
+    final path = _buildPath(folder: folder, fileName: fileName);
+    final url = await uploadBytesAtPath(
+      path: path,
+      bytes: bytes,
+      contentType: contentType ?? _contentTypeFor(fileName),
+      onProgress: onProgress,
+      debugLabel: fileName,
+    );
+    return StorageUploadResult(url: url, path: path, byteCount: bytes.length);
   }
 
   /// Uploads to an exact Storage object [path] (used for topic-keyed AI video cache).
@@ -115,7 +148,12 @@ class StorageService {
       debugPrint('[Storage] putData starting…');
       final task = ref.putData(
         bytes,
-        SettableMetadata(contentType: resolvedType),
+        SettableMetadata(
+          contentType: resolvedType,
+          contentDisposition: resolvedType == 'application/pdf'
+              ? 'inline; filename="${_safeDispositionName(debugLabel)}"'
+              : null,
+        ),
       );
 
       if (onProgress != null) {
@@ -246,21 +284,23 @@ class StorageService {
         value.contains('firebasestorage.googleapis.com') ||
         value.contains('firebasestorage.app') ||
         value.contains('.appspot.com')) {
-      return _storage.refFromURL(value);
+      try {
+        return _storage.refFromURL(value);
+      } catch (e) {
+        debugPrint('[Storage] refFromURL failed, using object path: $e');
+        final path = storage_url.firebaseStorageObjectPath(value);
+        if (path == null || path.isEmpty) rethrow;
+        return _storage.ref().child(path);
+      }
     }
-    final path = value.replaceFirst(RegExp(r'^/+'), '');
+    final path = storage_url.firebaseStorageObjectPath(value) ??
+        value.replaceFirst(RegExp(r'^/+'), '');
     return _storage.ref().child(path);
   }
 
   /// True when [url] points at this project's Firebase Storage (https or gs).
-  bool isFirebaseStorageUrl(String url) {
-    final u = url.trim().toLowerCase();
-    if (u.isEmpty) return false;
-    return u.startsWith('gs://') ||
-        u.contains('firebasestorage.googleapis.com') ||
-        u.contains('firebasestorage.app') ||
-        u.contains('.appspot.com');
-  }
+  bool isFirebaseStorageUrl(String url) =>
+      storage_url.isFirebaseStorageUrl(url);
 
   /// Refreshes a Storage object URL through [Reference.getDownloadURL].
   ///
@@ -270,7 +310,7 @@ class StorageService {
     final url = stored.trim();
     if (url.isEmpty) return '';
     try {
-      if (isFirebaseStorageUrl(url) || !url.contains('://')) {
+      if (storage_url.isFirebaseStorageUrl(url) || !url.contains('://')) {
         final fresh = await refFromStored(url).getDownloadURL().timeout(
           const Duration(seconds: 20),
           onTimeout: () {
@@ -283,13 +323,14 @@ class StorageService {
       return url;
     } catch (e) {
       debugPrint('[Storage] resolveDownloadUrl fallback: $e');
-      return isFirebaseStorageUrl(url) ? url : url;
+      return url;
     }
   }
 
-  /// Downloads file bytes. Prefers the Storage SDK ([getDownloadURL] +
-  /// [Reference.getData]) so Flutter Web does not CORS-fetch the public URL
-  /// the way [PdfViewer.uri] does (`TypeError: Failed to fetch`).
+  /// Downloads file bytes via the Storage SDK (`getData`), then HTTP.
+  ///
+  /// HTTP is used to return the original PDF when CORS allows it, and to
+  /// surface Storage JSON errors such as HTTP 402 (billing disabled).
   Future<Uint8List> downloadBytes(
     String stored, {
     int maxSize = 32 * 1024 * 1024,
@@ -299,10 +340,10 @@ class StorageService {
       throw StateError('File URL is empty.');
     }
 
-    if (isFirebaseStorageUrl(url) || !url.contains('://')) {
+    Object? sdkError;
+    if (storage_url.isFirebaseStorageUrl(url) || !url.contains('://')) {
       try {
         final ref = refFromStored(url);
-        await ref.getDownloadURL().timeout(const Duration(seconds: 20));
         final data = await ref.getData(maxSize).timeout(
           const Duration(seconds: 60),
         );
@@ -310,22 +351,83 @@ class StorageService {
           debugPrint('[Storage] getData OK bytes=${data.length}');
           return data;
         }
+        sdkError = StateError('Storage returned an empty PDF.');
       } catch (e) {
-        debugPrint('[Storage] getData failed, HTTP fallback: $e');
+        debugPrint('[Storage] getData failed: $e');
+        sdkError = e;
       }
     }
 
+    if (kIsWeb) {
+      // CORS is allowed for this origin on a properly configured bucket.
+      // Still try HTTP so we can surface Storage JSON errors (e.g. HTTP 402
+      // billing disabled) instead of a generic empty viewer, and so a
+      // successful download can feed pdfrx without a second CORS failure.
+      try {
+        final resolved = await resolveDownloadUrl(url);
+        if (resolved.contains('://')) {
+          final response = await http.get(Uri.parse(resolved)).timeout(
+            const Duration(seconds: 60),
+          );
+          _throwIfStorageHttpFailed(response.statusCode, response.body);
+          if (response.bodyBytes.isNotEmpty) {
+            debugPrint(
+              '[Storage] web HTTP get OK bytes=${response.bodyBytes.length}',
+            );
+            return response.bodyBytes;
+          }
+        }
+      } catch (e) {
+        debugPrint('[Storage] web HTTP get failed: $e');
+        if (e is StateError) rethrow;
+      }
+      throw StateError(
+        'Could not load PDF bytes in the app'
+        '${sdkError == null ? '' : ': $sdkError'}. '
+        'The original file is still in Firebase Storage — use '
+        'Open PDF in new tab.',
+      );
+    }
+
     final resolved = await resolveDownloadUrl(url);
+    if (resolved.isEmpty || !resolved.contains('://')) {
+      throw StateError(
+        'Could not resolve a download URL'
+        '${sdkError == null ? '' : ' (SDK: $sdkError)'}.',
+      );
+    }
     final response = await http.get(Uri.parse(resolved)).timeout(
       const Duration(seconds: 60),
     );
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw StateError('File download failed.');
-    }
+    _throwIfStorageHttpFailed(response.statusCode, response.body);
     if (response.bodyBytes.isEmpty) {
       throw StateError('File download returned an empty file.');
     }
     return response.bodyBytes;
+  }
+
+  void _throwIfStorageHttpFailed(int status, String body) {
+    if (status >= 200 && status < 300) return;
+    var detail = '';
+    try {
+      final decoded = jsonDecode(body);
+      if (decoded is Map && decoded['error'] is Map) {
+        final err = Map<String, dynamic>.from(decoded['error'] as Map);
+        detail = '${err['message'] ?? err['code'] ?? ''}'.trim();
+      }
+    } catch (_) {}
+    if (status == 402) {
+      throw StateError(
+        'Firebase Storage billing is disabled (HTTP 402)'
+        '${detail.isEmpty ? '' : ': $detail'}. '
+        'Re-enable billing for project mpsc-3f4ef in Google Cloud Console. '
+        'The PDF object can still exist, but downloads stay blocked until billing is active.',
+      );
+    }
+    throw StateError(
+      'PDF download failed (HTTP $status)'
+      '${detail.isEmpty ? '' : ': $detail'}.',
+    );
   }
 
   /// Best-effort delete of a previously uploaded file, given its download
@@ -346,6 +448,12 @@ class StorageService {
     final ts = DateTime.now().millisecondsSinceEpoch;
     final safeName = fileName.replaceAll(RegExp(r'[^\w.\-]+'), '_');
     return '$folder/${ts}_$safeName';
+  }
+
+  String _safeDispositionName(String fileName) {
+    final safe = fileName.replaceAll(RegExp(r'[^\w.\-]+'), '_');
+    if (safe.isEmpty) return 'notes.pdf';
+    return safe.toLowerCase().endsWith('.pdf') ? safe : '$safe.pdf';
   }
 
   String _contentTypeFor(String fileName) {

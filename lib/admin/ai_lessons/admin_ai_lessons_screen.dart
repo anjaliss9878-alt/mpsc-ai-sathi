@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:mpsc_combine_ai/admin/widgets/admin_scaffold.dart';
 import 'package:mpsc_combine_ai/admin/widgets/confirm_delete_dialog.dart';
+import 'package:mpsc_combine_ai/admin/widgets/content_index_picker.dart';
 import 'package:mpsc_combine_ai/models/ai_lesson.dart';
+import 'package:mpsc_combine_ai/models/content_index.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/ai_lesson_asset_service.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/ai_lesson_queue.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/ai_lesson_repository.dart';
@@ -19,6 +21,7 @@ class AdminAiLessonsScreen extends StatefulWidget {
 
 class _AdminAiLessonsScreenState extends State<AdminAiLessonsScreen> {
   final _topic = TextEditingController();
+  ContentIndexSelection _index = const ContentIndexSelection();
   bool _busy = false;
 
   @override
@@ -36,6 +39,12 @@ class _AdminAiLessonsScreenState extends State<AdminAiLessonsScreen> {
       final id = await aiLessonRepository.enqueue(
         uid: uid,
         topic: topic,
+        chapterId: _index.chapterId,
+        subjectId: _index.subjectId,
+        subjectTitle: _index.subjectTitle,
+        examId: _index.examId,
+        targetGroup: targetGroupToString(_index.targetGroup),
+        topicId: _index.topicId,
         forceRegenerate: true,
       );
       aiLessonQueue.submit(id);
@@ -72,6 +81,9 @@ class _AdminAiLessonsScreenState extends State<AdminAiLessonsScreen> {
         chapterId: lesson.chapterId,
         subjectId: lesson.subjectId,
         subjectTitle: lesson.subjectTitle,
+        examId: lesson.examId,
+        targetGroup: lesson.targetGroup,
+        topicId: lesson.topicId,
         forceRegenerate: true,
       );
       aiLessonQueue.submit(id);
@@ -113,22 +125,31 @@ class _AdminAiLessonsScreenState extends State<AdminAiLessonsScreen> {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: Row(
+            child: Column(
               children: [
-                Expanded(
-                  child: TextField(
-                    controller: _topic,
-                    decoration: const InputDecoration(
-                      hintText: 'Topic (e.g. संसद)',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
+                ContentIndexPicker(
+                  initial: _index,
+                  onChanged: (v) => _index = v,
                 ),
-                const SizedBox(width: 8),
-                FilledButton.icon(
-                  onPressed: _busy ? null : _generate,
-                  icon: const Icon(Icons.movie_creation_outlined),
-                  label: const Text('Generate AI Lesson'),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _topic,
+                        decoration: const InputDecoration(
+                          hintText: 'Topic (e.g. संसद)',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    FilledButton.icon(
+                      onPressed: _busy ? null : _generate,
+                      icon: const Icon(Icons.movie_creation_outlined),
+                      label: const Text('Generate AI Lesson'),
+                    ),
+                  ],
                 ),
               ],
             ),

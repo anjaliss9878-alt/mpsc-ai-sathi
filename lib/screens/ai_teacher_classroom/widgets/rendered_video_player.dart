@@ -27,18 +27,19 @@ class RenderedVideoPlayer extends StatefulWidget {
   final VoidCallback? onBack;
 
   @override
-  State<RenderedVideoPlayer> createState() => _RenderedVideoPlayerState();
+  State<RenderedVideoPlayer> createState() => RenderedVideoPlayerState();
 }
 
-class _RenderedVideoPlayerState extends State<RenderedVideoPlayer> {
+class RenderedVideoPlayerState extends State<RenderedVideoPlayer> {
   VideoPlayerController? _controller;
   String? _error;
   bool _ready = false;
-  double _speed = 0.95;
+  double _speed = 0.9;
   double _startFraction = 0;
+  bool _muted = false;
   Timer? _saveTimer;
 
-  static const _speeds = <double>[0.75, 0.95, 1.0, 1.25, 1.5];
+  static const _speeds = <double>[0.75, 0.9, 1.0, 1.25, 1.5];
 
   @override
   void initState() {
@@ -86,6 +87,7 @@ class _RenderedVideoPlayerState extends State<RenderedVideoPlayer> {
       await c.initialize();
       await c.setLooping(false);
       await c.setPlaybackSpeed(_speed);
+      await c.setVolume(_muted ? 0 : 1);
       if (_startFraction > 0.02) {
         final d = c.value.duration;
         await c.seekTo(
@@ -129,6 +131,68 @@ class _RenderedVideoPlayerState extends State<RenderedVideoPlayer> {
     } catch (_) {}
   }
 
+  Future<void> play() async {
+    await _controller?.play();
+    if (mounted) setState(() {});
+  }
+
+  Future<void> pause() async {
+    await _controller?.pause();
+    if (mounted) setState(() {});
+  }
+
+  Future<void> togglePlayPause() async {
+    final c = _controller;
+    if (c == null) return;
+    if (c.value.isPlaying) {
+      await pause();
+    } else {
+      await play();
+    }
+  }
+
+  Future<void> stop() async {
+    final c = _controller;
+    if (c == null) return;
+    await c.pause();
+    await c.seekTo(Duration.zero);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> replay() async {
+    final c = _controller;
+    if (c == null || !c.value.isInitialized) return;
+    await c.seekTo(Duration.zero);
+    await c.play();
+    if (mounted) setState(() {});
+  }
+
+  Future<void> seekFraction(double fraction) async {
+    final c = _controller;
+    if (c == null || !c.value.isInitialized) return;
+    final d = c.value.duration;
+    await c.seekTo(
+      Duration(milliseconds: (d.inMilliseconds * fraction.clamp(0.0, 1.0)).round()),
+    );
+    if (mounted) setState(() {});
+  }
+
+  Future<void> setSpeed(double speed) async {
+    _speed = speed.clamp(0.5, 1.5);
+    await _controller?.setPlaybackSpeed(_speed);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> setMuted(bool muted) async {
+    _muted = muted;
+    await _controller?.setVolume(muted ? 0 : 1);
+    if (mounted) setState(() {});
+  }
+
+  void openFullscreen() {
+    unawaited(_openFullscreen());
+  }
+
   Future<void> _skip(int seconds) async {
     final c = _controller;
     if (c == null || !c.value.isInitialized) return;
@@ -157,10 +221,13 @@ class _RenderedVideoPlayerState extends State<RenderedVideoPlayer> {
           onBack: () => Navigator.of(context).maybePop(),
           onSkip: _skip,
           onCycleSpeed: _cycleSpeed,
-          speed: _speed,
+          onStop: stop,
+          onReplay: replay,
+          onMuteToggle: () => setMuted(!_muted),
         ),
       ),
     );
+    if (mounted) setState(() {});
   }
 
   @override
@@ -214,14 +281,11 @@ class _RenderedVideoPlayerState extends State<RenderedVideoPlayer> {
         _TransportBar(
           controller: c,
           speed: _speed,
-          onPlayPause: () {
-            if (c.value.isPlaying) {
-              c.pause();
-            } else {
-              c.play();
-            }
-            setState(() {});
-          },
+          muted: _muted,
+          onPlayPause: () => unawaited(togglePlayPause()),
+          onStop: () => unawaited(stop()),
+          onReplay: () => unawaited(replay()),
+          onMuteToggle: () => unawaited(setMuted(!_muted)),
           onSkip: _skip,
           onCycleSpeed: _cycleSpeed,
           onFullscreen: _openFullscreen,
@@ -237,7 +301,11 @@ class _TransportBar extends StatelessWidget {
   const _TransportBar({
     required this.controller,
     required this.speed,
+    required this.muted,
     required this.onPlayPause,
+    required this.onStop,
+    required this.onReplay,
+    required this.onMuteToggle,
     required this.onSkip,
     required this.onCycleSpeed,
     required this.onFullscreen,
@@ -247,7 +315,11 @@ class _TransportBar extends StatelessWidget {
 
   final VideoPlayerController controller;
   final double speed;
+  final bool muted;
   final VoidCallback onPlayPause;
+  final VoidCallback onStop;
+  final VoidCallback onReplay;
+  final VoidCallback onMuteToggle;
   final Future<void> Function(int seconds) onSkip;
   final VoidCallback onCycleSpeed;
   final VoidCallback onFullscreen;
@@ -298,6 +370,24 @@ class _TransportBar extends StatelessWidget {
               onPressed: () => onSkip(10),
               icon: const Icon(Icons.forward_10_rounded, color: AppColors.navy),
             ),
+            IconButton(
+              tooltip: 'Stop',
+              onPressed: onStop,
+              icon: const Icon(Icons.stop_rounded, color: AppColors.navy),
+            ),
+            IconButton(
+              tooltip: 'Replay',
+              onPressed: onReplay,
+              icon: const Icon(Icons.replay_rounded, color: AppColors.navy),
+            ),
+            IconButton(
+              tooltip: muted ? 'Unmute' : 'Volume',
+              onPressed: onMuteToggle,
+              icon: Icon(
+                muted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+                color: AppColors.navy,
+              ),
+            ),
             Text(
               '${formatMediaClock(pos)} / ${formatMediaClock(dur)}',
               style: const TextStyle(
@@ -338,54 +428,69 @@ class _FullscreenVideoScaffold extends StatelessWidget {
     required this.onBack,
     required this.onSkip,
     required this.onCycleSpeed,
-    required this.speed,
+    required this.onStop,
+    required this.onReplay,
+    required this.onMuteToggle,
   });
 
   final VideoPlayerController controller;
   final VoidCallback onBack;
   final Future<void> Function(int seconds) onSkip;
   final VoidCallback onCycleSpeed;
-  final double speed;
+  final Future<void> Function() onStop;
+  final Future<void> Function() onReplay;
+  final Future<void> Function() onMuteToggle;
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        backgroundColor: Colors.black,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_rounded),
-          onPressed: onBack,
-        ),
-        title: const Text('AI Classroom'),
-      ),
-      body: Center(
-        child: AspectRatio(
-          aspectRatio: controller.value.aspectRatio == 0
-              ? 16 / 9
-              : controller.value.aspectRatio,
-          child: VideoPlayer(controller),
-        ),
-      ),
-      bottomNavigationBar: ColoredBox(
-        color: Colors.black,
-        child: _TransportBar(
-          controller: controller,
-          speed: speed,
-          onPlayPause: () {
-            if (controller.value.isPlaying) {
-              controller.pause();
-            } else {
-              controller.play();
-            }
-          },
-          onSkip: onSkip,
-          onCycleSpeed: onCycleSpeed,
-          onFullscreen: onBack,
-          onPip: () => unawaited(requestPictureInPicture()),
-          onBack: onBack,
-        ),
-      ),
+    return ListenableBuilder(
+      listenable: controller,
+      builder: (context, _) {
+        final muted = controller.value.volume <= 0.01;
+        final speed = controller.value.playbackSpeed;
+        return Scaffold(
+          backgroundColor: Colors.black,
+          appBar: AppBar(
+            backgroundColor: Colors.black,
+            leading: IconButton(
+              icon: const Icon(Icons.arrow_back_rounded),
+              onPressed: onBack,
+            ),
+            title: const Text('AI Classroom'),
+          ),
+          body: Center(
+            child: AspectRatio(
+              aspectRatio: controller.value.aspectRatio == 0
+                  ? 16 / 9
+                  : controller.value.aspectRatio,
+              child: VideoPlayer(controller),
+            ),
+          ),
+          bottomNavigationBar: ColoredBox(
+            color: Colors.black,
+            child: _TransportBar(
+              controller: controller,
+              speed: speed,
+              muted: muted,
+              onPlayPause: () {
+                if (controller.value.isPlaying) {
+                  controller.pause();
+                } else {
+                  controller.play();
+                }
+              },
+              onStop: () => unawaited(onStop()),
+              onReplay: () => unawaited(onReplay()),
+              onMuteToggle: () => unawaited(onMuteToggle()),
+              onSkip: onSkip,
+              onCycleSpeed: onCycleSpeed,
+              onFullscreen: onBack,
+              onPip: () => unawaited(requestPictureInPicture()),
+              onBack: onBack,
+            ),
+          ),
+        );
+      },
     );
   }
 }

@@ -21,8 +21,8 @@ service firebase.storage {
     }
 
     function isAdmin() {
-      // Match Firestore rules: accept singular `admin` (current) or plural
-      // `admins` (legacy) so Storage uploads succeed for either allow-list.
+      // Canonical allow-list is Firestore `admin/{uid}` (singular), matching
+      // AdminRepository. Also accept legacy `admins/{uid}`.
       return isSignedIn() && (
         firestore.exists(/databases/(default)/documents/admin/$(request.auth.uid)) ||
         firestore.exists(/databases/(default)/documents/admins/$(request.auth.uid))
@@ -34,6 +34,10 @@ service firebase.storage {
       allow write: if isAdmin();
     }
 
+    // Original notes PDFs. Writes stay admin-only (never public write).
+    // Students may READ bytes only when signed in. Unpublished drafts are
+    // hidden by Firestore `notes.published` / student streams — Storage
+    // cannot map `notes/{fileName}` to a published note without a redesign.
     match /notes/{fileName} {
       allow read: if isSignedIn();
       allow write: if isAdmin();
@@ -44,6 +48,17 @@ service firebase.storage {
       allow write: if isSignedIn()
         && request.resource.size < 20 * 1024 * 1024
         && request.resource.contentType.matches('audio/.*');
+    }
+
+    // Per-lesson AI Teacher audio / muxed MP4. Signed-in students only.
+    match /ai_lessons/{lessonId}/{fileName} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn()
+        && request.resource.size < 120 * 1024 * 1024
+        && (
+          request.resource.contentType.matches('audio/.*') ||
+          request.resource.contentType.matches('video/.*')
+        );
     }
 
     match /videos/{fileName} {
@@ -83,6 +98,11 @@ service firebase.storage {
     }
 
     match /teachingSlides/{fileName} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /ragSources/{allPaths=**} {
       allow read: if isSignedIn();
       allow write: if isAdmin();
     }

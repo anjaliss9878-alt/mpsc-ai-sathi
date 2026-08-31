@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:mpsc_combine_ai/models/chat_message.dart';
 import 'package:mpsc_combine_ai/models/mcq_item.dart';
+import 'package:mpsc_combine_ai/models/test_result.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_service.dart';
 import 'package:mpsc_combine_ai/services/auth_service.dart';
 import 'package:mpsc_combine_ai/services/student_progress_repository.dart';
@@ -34,6 +35,7 @@ class _McqSetScreenState extends State<McqSetScreen> {
   Timer? _timer;
   bool _aiLoading = false;
   String? _aiExplanation;
+  bool _scorePersisted = false;
 
   int get _attempted => _selected.where((s) => s != null).length;
   int get _correct {
@@ -215,8 +217,50 @@ class _McqSetScreenState extends State<McqSetScreen> {
     _resetTimerForCurrent();
   }
 
+  Future<void> _persistPracticeScore() async {
+    if (_scorePersisted || _attempted <= 0) return;
+    _scorePersisted = true;
+    final uid = authService.currentUser?.uid;
+    if (uid == null) return;
+    final first = _questions.isNotEmpty ? _questions.first : null;
+    final wrong = _wrongIndexes.length;
+    final result = TestResult(
+      testTitle: widget.setTitle,
+      dateTime: DateTime.now(),
+      totalQuestions: _questions.length,
+      attempted: _attempted,
+      correct: _correct,
+      wrong: wrong,
+      score: _correct.toDouble(),
+      maxScore: _questions.length.toDouble(),
+      percentage: _questions.isEmpty ? 0 : (_correct / _questions.length) * 100,
+      timeTakenSeconds: 0,
+      questionResults: [
+        for (var i = 0; i < _questions.length; i++)
+          QuestionResult(
+            question: _questions[i].question,
+            options: _questions[i].options,
+            correctIndex: _questions[i].correctIndex,
+            selectedIndex: _selected[i] == -1 ? null : _selected[i],
+            explanation: _questions[i].explanation,
+          ),
+      ],
+    );
+    try {
+      await studentProgressRepository.saveTestAttempt(
+        uid,
+        result,
+        testId: 'mcq_${widget.setTitle.hashCode}',
+        kind: 'mcq',
+        subjectId: first?.subjectId ?? '',
+        chapterId: first?.chapterId ?? '',
+      );
+    } catch (_) {}
+  }
+
   void _showScoreAndReview() {
     _timer?.cancel();
+    _persistPracticeScore();
     final wrong = _wrongIndexes;
     showModalBottomSheet<void>(
       context: context,

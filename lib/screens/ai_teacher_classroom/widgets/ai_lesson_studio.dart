@@ -6,6 +6,7 @@ import 'package:mpsc_combine_ai/screens/ai_teacher_classroom/widgets/ai_lesson_p
 import 'package:mpsc_combine_ai/screens/ai_teacher_classroom/widgets/ai_teacher_lecture_page.dart';
 import 'package:mpsc_combine_ai/screens/ai_teacher_classroom/widgets/classroom_avatar.dart';
 import 'package:mpsc_combine_ai/screens/ai_teacher_classroom/widgets/lesson_ask_ai_panel.dart';
+import 'package:mpsc_combine_ai/screens/ai_teacher_classroom/widgets/rendered_video_player.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/full_lesson_narration.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/generated_lesson.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/lesson_notes_export.dart';
@@ -25,12 +26,14 @@ class AiLessonStudio extends StatefulWidget {
     this.audio,
     this.initialTab = AiLessonStudioTab.video,
     this.audioFailed = false,
+    this.videoPlaybackUrl,
   });
 
   final GeneratedLesson lesson;
   final LessonAudioBundle? audio;
   final AiLessonStudioTab initialTab;
   final bool audioFailed;
+  final String? videoPlaybackUrl;
 
   @override
   State<AiLessonStudio> createState() => _AiLessonStudioState();
@@ -41,6 +44,11 @@ class _AiLessonStudioState extends State<AiLessonStudio>
   late final TabController _tabs;
   VideoClassroomEngine? _engine;
   bool _started = false;
+  final GlobalKey<RenderedVideoPlayerState> _videoKey =
+      GlobalKey<RenderedVideoPlayerState>();
+
+  bool get _hasMuxedVideo =>
+      (widget.videoPlaybackUrl ?? '').trim().isNotEmpty;
 
   static const _labels = [
     'AI Video Lecture',
@@ -61,27 +69,57 @@ class _AiLessonStudioState extends State<AiLessonStudio>
       initialIndex: widget.initialTab.index.clamp(0, 6),
     );
     _tabs.addListener(_onTab);
-    if (widget.audio != null) {
-      _attachEngine(widget.audio!);
-    }
+    _syncPlaybackOwner();
   }
 
   @override
   void didUpdateWidget(covariant AiLessonStudio oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.audio == null && widget.audio != null) {
+    final wasMuxed = (oldWidget.videoPlaybackUrl ?? '').trim().isNotEmpty;
+    if (_hasMuxedVideo != wasMuxed ||
+        oldWidget.audio != widget.audio) {
+      _syncPlaybackOwner();
+    }
+  }
+
+  void _syncPlaybackOwner() {
+    if (_hasMuxedVideo) {
+      if (_engine != null) {
+        _tearDownEngine();
+        if (mounted) setState(() {});
+      }
+      return;
+    }
+    if (widget.audio != null && _engine == null) {
       _started = false;
       _attachEngine(widget.audio!);
     }
   }
 
+  void _tearDownEngine() {
+    _engine?.stop();
+    _engine?.dispose();
+    _engine = null;
+    _started = false;
+  }
+
   void _onTab() {
+    if (_tabs.indexIsChanging) return;
     if (_tabs.index != 0) {
-      _engine?.pause();
+      _stopActiveOwner();
+    }
+  }
+
+  void _stopActiveOwner() {
+    if (_hasMuxedVideo) {
+      unawaited(_videoKey.currentState?.stop());
+    } else {
+      _engine?.stop();
     }
   }
 
   void _attachEngine(LessonAudioBundle audio) {
+    if (_hasMuxedVideo) return;
     _engine?.dispose();
     final engine = VideoClassroomEngine();
     engine.setLesson(widget.lesson);
@@ -96,20 +134,39 @@ class _AiLessonStudioState extends State<AiLessonStudio>
     VideoClassroomEngine engine,
     LessonAudioBundle audio,
   ) async {
-    if (_started) return;
+    if (_started || _hasMuxedVideo) return;
     _started = true;
     try {
       await engine.attachContinuousAudio(audio);
-      if (!mounted) return;
+      if (!mounted || _hasMuxedVideo) {
+        engine.stop();
+        return;
+      }
       if (_tabs.index == 0) engine.play();
     } catch (_) {}
+  }
+
+  void _openFullscreen() {
+    if (_hasMuxedVideo) {
+      _videoKey.currentState?.openFullscreen();
+      return;
+    }
+    final engine = _engine;
+    if (engine == null) return;
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => AiTeacherLecturePage(engine: engine),
+      ),
+    );
   }
 
   @override
   void dispose() {
     _tabs.removeListener(_onTab);
+    _stopActiveOwner();
     _tabs.dispose();
     _engine?.dispose();
+    _engine = null;
     super.dispose();
   }
 
@@ -141,9 +198,14 @@ class _AiLessonStudioState extends State<AiLessonStudio>
               _VideoTab(
                 lesson: widget.lesson,
                 engine: _engine,
-                audio: widget.audio,
-                waiting: widget.audio == null && !widget.audioFailed,
+                waiting: widget.audio == null &&
+                    !widget.audioFailed &&
+                    !_hasMuxedVideo,
                 audioFailed: widget.audioFailed,
+                videoPlaybackUrl: widget.videoPlaybackUrl,
+                videoKey: _videoKey,
+                autoplayVideo: _tabs.index == 0,
+                onFullscreen: _openFullscreen,
               ),
               _NotesTab(lesson: widget.lesson),
               _MemoryTab(lesson: widget.lesson),
@@ -164,25 +226,45 @@ class _VideoTab extends StatelessWidget {
     required this.lesson,
     required this.engine,
     required this.waiting,
-    this.audio,
+    required this.videoKey,
+    required this.autoplayVideo,
+    required this.onFullscreen,
     this.audioFailed = false,
+    this.videoPlaybackUrl,
   });
 
   final GeneratedLesson lesson;
   final VideoClassroomEngine? engine;
-  final LessonAudioBundle? audio;
   final bool waiting;
   final bool audioFailed;
+  final String? videoPlaybackUrl;
+  final GlobalKey<RenderedVideoPlayerState> videoKey;
+  final bool autoplayVideo;
+  final VoidCallback onFullscreen;
 
   @override
   Widget build(BuildContext context) {
-    if (waiting && engine == null) {
-      return const DhadaProgress();
+    if (waiting && engine == null && (videoPlaybackUrl ?? '').isEmpty) {
+      return const DhadaProgress(message: 'Generating AI Teacher voice...');
     }
 
-    final player = engine == null
-        ? _StaticSlides(lesson: lesson)
-        : ListenableBuilder(
+    final muxedUrl = (videoPlaybackUrl ?? '').trim();
+    final Widget player;
+    if (muxedUrl.isNotEmpty) {
+      player = ColoredBox(
+        color: Colors.black,
+        child: Center(
+          child: RenderedVideoPlayer(
+            key: videoKey,
+            source: muxedUrl,
+            autoplay: autoplayVideo,
+          ),
+        ),
+      );
+    } else if (engine == null) {
+      player = _SlidePreview(lesson: lesson);
+    } else {
+      player = ListenableBuilder(
             listenable: engine!,
             builder: (context, _) {
               final e = engine!;
@@ -222,6 +304,7 @@ class _VideoTab extends StatelessWidget {
               );
             },
           );
+    }
 
     return Column(
       children: [
@@ -254,23 +337,9 @@ class _VideoTab extends StatelessWidget {
                   label: const Text('Transcript'),
                 ),
                 TextButton.icon(
-                  onPressed: engine == null && audio == null
+                  onPressed: muxedUrl.isEmpty && engine == null
                       ? null
-                      : () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute<void>(
-                              builder: (_) => audio == null
-                                  ? Scaffold(
-                                      appBar: AppBar(title: Text(lesson.topicName)),
-                                      body: _StaticSlides(lesson: lesson),
-                                    )
-                                  : AiTeacherLecturePage(
-                                      lesson: lesson,
-                                      audio: audio!,
-                                    ),
-                            ),
-                          );
-                        },
+                      : onFullscreen,
                   icon: const Icon(Icons.fullscreen_rounded, size: 18),
                   label: const Text('Fullscreen'),
                 ),
@@ -295,8 +364,8 @@ class _VideoTab extends StatelessWidget {
   }
 }
 
-class _StaticSlides extends StatelessWidget {
-  const _StaticSlides({required this.lesson});
+class _SlidePreview extends StatelessWidget {
+  const _SlidePreview({required this.lesson});
 
   final GeneratedLesson lesson;
 
@@ -320,6 +389,7 @@ class _StaticSlides extends StatelessWidget {
       subtitle: lesson.slides.first.narration,
       speed: 1,
       muted: true,
+      controlsEnabled: false,
       onPlayPause: () {},
       onReplay: () {},
       onStop: () {},

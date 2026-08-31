@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Netlify build: Flutter web student app.
-# Does NOT pass AI_API_KEY / ELEVENLABS_API_KEY into dart-define
+# Does NOT pass AI_API_KEY / ELEVENLABS_API_KEY / VERTEX_* into dart-define
 # (those belong on Netlify Functions only).
 set -euo pipefail
 

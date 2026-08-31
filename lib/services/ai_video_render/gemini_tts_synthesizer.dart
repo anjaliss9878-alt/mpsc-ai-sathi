@@ -18,9 +18,7 @@ class GeminiTtsSynthesizer {
   static const String _modelOverride = String.fromEnvironment('GEMINI_TTS_MODEL');
 
   static const _models = <String>[
-    'gemini-2.5-flash-preview-tts',
-    'gemini-2.5-pro-preview-tts',
-    'gemini-2.0-flash-exp',
+    'gemini-3.1-flash-tts-preview',
   ];
 
   bool get isConfigured => _apiKey.trim().isNotEmpty;
@@ -52,7 +50,7 @@ class GeminiTtsSynthesizer {
   /// Three attempts with exponential backoff. Stores the last exact error.
   Future<Uint8List> synthesizeMarathiFacultyWithRetry(
     String text, {
-    int attempts = 3,
+    int attempts = 1,
   }) async {
     Object? lastError;
     for (var i = 0; i < attempts; i++) {
@@ -129,23 +127,15 @@ class GeminiTtsSynthesizer {
       'https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent',
     );
     final body = jsonEncode({
-      'systemInstruction': {
-        'parts': [
-          {
-            'text':
-                'You are a warm professional female Marathi MPSC faculty. '
-                'Read the user text as one continuous lecture with no gaps. '
-                'Never say plus, minus, slash, percent, equals, bullet, page, '
-                'or any punctuation name. Do not add extra words. '
-                'Do not pause between sentences.',
-          },
-        ],
-      },
       'contents': [
         {
           'role': 'user',
           'parts': [
-            {'text': trimmed},
+            {
+              'text':
+                  'Speak in natural Marathi as a warm female MPSC faculty. '
+                  'Do not add extra words. Read exactly:\n$trimmed',
+            },
           ],
         },
       ],
@@ -170,12 +160,15 @@ class GeminiTtsSynthesizer {
           },
           body: body,
         )
-        .timeout(const Duration(seconds: 90));
+          .timeout(const Duration(seconds: 90));
 
     if (response.statusCode != 200) {
+      final snippet = response.body.length > 220
+          ? response.body.substring(0, 220)
+          : response.body;
+      print('[GeminiTTS] http=${response.statusCode} model=$model');
       throw StateError(
-        'Gemini TTS failed HTTP ${response.statusCode} ($model): '
-        '${response.body.length > 280 ? response.body.substring(0, 280) : response.body}',
+        'Gemini TTS failed HTTP ${response.statusCode} ($model): $snippet',
       );
     }
 

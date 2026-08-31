@@ -8,6 +8,8 @@ import 'google_cloud_tts_service.dart';
 import 'ai_video_render/gemini_tts_synthesizer.dart';
 import 'package:mpsc_combine_ai/utils/audio_blob_url.dart';
 
+enum ContinuousPlayResult { completed, paused, cancelled, error }
+
 /// Playback state for AI Classroom narration (Google Cloud TTS or free TTS).
 enum LessonAudioState {
   idle,
@@ -102,6 +104,7 @@ class LessonAudioPlayer {
   bool get isLoading =>
       _state == LessonAudioState.loading ||
       _state == LessonAudioState.buffering;
+  bool get pauseRequested => _paused;
   Duration get position => _player.position;
   Duration get duration => _duration;
 
@@ -274,19 +277,44 @@ class LessonAudioPlayer {
     return _duration;
   }
 
-  /// Plays the preloaded full-lesson file from [from] until the end or Stop.
-  Future<void> playContinuous({Duration from = Duration.zero}) async {
+  /// Clears a pause gate so an explicit Play/Replay can start audio.
+  void releasePauseGate() {
     if (_disposed) return;
+    _paused = false;
+  }
+
+  /// Plays the preloaded full-lesson file from [from] until the end or Stop.
+  /// Does not clear an existing pause request — Pause stays authoritative.
+  Future<ContinuousPlayResult> playContinuous({
+    Duration from = Duration.zero,
+  }) async {
+    if (_disposed) return ContinuousPlayResult.cancelled;
     if (!_continuousReady) {
       throw StateError('preloadContinuous must complete before playContinuous');
     }
-    _paused = false;
+    if (_paused) return ContinuousPlayResult.paused;
     final gen = ++_speakGeneration;
     _activeBackend = _AudioBackend.continuous;
     _segmentDone = Completer<void>();
     await _bindProgress();
+    if (_paused || gen != _speakGeneration || _disposed) {
+      return _paused
+          ? ContinuousPlayResult.paused
+          : ContinuousPlayResult.cancelled;
+    }
     _setState(LessonAudioState.playing);
     await seekTo(from);
+    if (_paused || gen != _speakGeneration || _disposed) {
+      if (_paused) {
+        try {
+          await _player.pause();
+        } catch (_) {}
+        _setState(LessonAudioState.paused);
+      }
+      return _paused
+          ? ContinuousPlayResult.paused
+          : ContinuousPlayResult.cancelled;
+    }
     try {
       await _player.setSpeed(_speed);
     } catch (_) {}
@@ -295,11 +323,31 @@ class LessonAudioPlayer {
         await _player.setVolume(0);
       } catch (_) {}
     }
-    await _player.play();
-    await _waitUntilCompleteOrCancelled(gen);
-    if (gen == _speakGeneration && !_paused && !_disposed) {
-      _setState(LessonAudioState.idle);
+    if (_paused) {
+      try {
+        await _player.pause();
+      } catch (_) {}
+      _setState(LessonAudioState.paused);
+      await _waitWhilePaused(gen);
+    } else {
+      await _player.play();
+      if (_paused) {
+        try {
+          await _player.pause();
+        } catch (_) {}
+        _setState(LessonAudioState.paused);
+      }
     }
+    await _waitUntilCompleteOrCancelled(gen);
+    if (_disposed) return ContinuousPlayResult.cancelled;
+    if (gen != _speakGeneration) return ContinuousPlayResult.cancelled;
+    if (_paused) return ContinuousPlayResult.paused;
+    if (_player.processingState == ProcessingState.completed ||
+        (_segmentDone?.isCompleted ?? false)) {
+      _setState(LessonAudioState.idle);
+      return ContinuousPlayResult.completed;
+    }
+    return ContinuousPlayResult.cancelled;
   }
 
   Future<void> _waitUntilCompleteOrCancelled(int gen) async {

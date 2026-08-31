@@ -292,6 +292,9 @@ class _NotesDetailScreenState extends State<NotesDetailScreen> {
                 if (primaryPdf != null) ...[
                   TopicPdfViewer(
                     url: primaryPdf.url,
+                    storagePath: notes?.pdfUrl == primaryPdf.url
+                        ? (notes?.pdfStoragePath ?? '')
+                        : '',
                     fileName: primaryPdf.name,
                     title: 'PDF Notes',
                     height: 220,
@@ -774,13 +777,19 @@ class _RelatedMcqsSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<List<McqItem>>(
-      stream: mcqRepository.watchAll(),
+      stream: mcqRepository.watchPublished(),
       builder: (context, snapshot) {
         if (snapshot.hasError || !snapshot.hasData) {
           return const SizedBox.shrink();
         }
-        final all = snapshot.data!.where((q) => q.published).toList();
-        final byChapter = all.where((q) => q.chapterId == chapterId).toList();
+        final all = snapshot.data!;
+        final byChapter = all
+            .where(
+              (q) =>
+                  q.chapterId == chapterId ||
+                  q.topicId == chapterId,
+            )
+            .toList();
         final bySubjectId = all.where((q) => q.subjectId == subjectId).toList();
         final byName = all.where((q) {
           final needle = subjectTitle.trim().toLowerCase();

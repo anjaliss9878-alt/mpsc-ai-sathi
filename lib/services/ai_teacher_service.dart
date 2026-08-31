@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:mpsc_combine_ai/models/chat_message.dart';
 import 'package:mpsc_combine_ai/services/ai_backend_base.dart';
+import 'package:mpsc_combine_ai/services/backend_request_headers.dart';
 import 'package:mpsc_combine_ai/utils/json_list.dart';
 
 /// Thrown whenever the AI Teacher service cannot produce a reply — missing
@@ -193,7 +194,7 @@ class GeminiAiTeacherService implements AiTeacherService {
       response = await _client
           .post(
             uri,
-            headers: {'Content-Type': 'application/json'},
+            headers: await backendJsonHeaders(),
             body: jsonEncode({
               'message': userMessage,
               'extraContext': extraContext ?? '',

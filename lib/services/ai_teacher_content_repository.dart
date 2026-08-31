@@ -22,6 +22,12 @@ class AiTeacherContentRepository {
         );
   }
 
+  Stream<List<AiTeacherContentItem>> watchPublished() {
+    return watchAll().map(
+      (all) => all.where((l) => l.isStudentVisible).toList(),
+    );
+  }
+
   Future<String> add(AiTeacherContentItem item) async {
     final doc = await _ref.add(item.toMap());
     return doc.id;
@@ -35,16 +41,16 @@ class AiTeacherContentRepository {
     await _ref.doc(id).delete();
   }
 
-  /// Finds the first authored lesson whose [AiTeacherContentItem.keywords]
-  /// contains a case-insensitive match somewhere in [question]. Returns
-  /// `null` if none match — the AI Teacher Classroom then falls back to
-  /// live Gemini generation exactly as it did before this module existed.
+  /// Finds the first *published* authored lesson whose keywords match
+  /// [question]. Drafts never play for students. Returns `null` if none
+  /// match — the classroom then falls back to live Gemini as before.
   Future<AiTeacherContentItem?> findMatchingLesson(String question) async {
     final normalized = question.toLowerCase();
     if (normalized.trim().isEmpty) return null;
     final snap = await _ref.get();
     for (final doc in snap.docs) {
       final item = AiTeacherContentItem.fromMap(doc.data(), doc.id);
+      if (!item.isStudentVisible) continue;
       for (final keyword in item.keywords) {
         if (keyword.trim().isEmpty) continue;
         if (normalized.contains(keyword.toLowerCase().trim())) {

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:collection';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:mpsc_combine_ai/models/ai_lesson.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/ai_lesson_asset_service.dart';
@@ -77,6 +78,7 @@ class AiLessonQueue {
             ? job.subjectTitle
             : job.subjectId,
         forceRegenerate: job.videoUrl.isEmpty && job.audioUrl.isEmpty,
+        studentUid: job.uid,
         onStage: (stage) {
           unawaited(_onPipelineStage(id, stage));
         },
@@ -122,6 +124,50 @@ class AiLessonQueue {
         return;
       }
 
+      await _repo.updateProgress(
+        id: id,
+        status: AiLessonStatus.generating,
+        stage: AiLessonStage.renderingVideo,
+        progress: 70,
+        friendlyMessage: 'Creating video...',
+        logMessage: 'Rendering slides + audio',
+      );
+
+      if (kIsWeb) {
+        await _repo.doc(id).set({
+          'audioUrl': audioPath,
+          'duration': audioSeconds,
+          'status': AiLessonStatus.generating.wire,
+          'lesson': result.lesson.toMap(),
+          'script': result.lesson.script,
+        }, SetOptions(merge: true));
+        return;
+      }
+
+      final rendered = await _pipeline.renderMp4(
+        lesson: result.lesson,
+        topic: job.topic,
+      );
+      final local = rendered?.videoPath ?? '';
+      if (local.isEmpty) {
+        await _repo.markFailed(
+          id: id,
+          technicalError: 'Video rendering failed',
+        );
+        return;
+      }
+      final uploaded = await _assets.uploadVideoFile(
+        lessonId: id,
+        localPath: local,
+      );
+      if (uploaded == null || uploaded.isEmpty) {
+        await _repo.markFailed(
+          id: id,
+          technicalError: 'Firebase video upload failed',
+        );
+        return;
+      }
+      final playback = await _assets.playbackUrl(uploaded);
       final duration = audioSeconds > 1
           ? audioSeconds
           : result.lesson.script.join(' ').length / 12.0;
@@ -129,17 +175,12 @@ class AiLessonQueue {
         id: id,
         lesson: result.lesson,
         audioUrl: audioPath,
-        videoUrl: '',
+        videoUrl: uploaded,
+        finalVideoUrl: playback,
         thumbnailUrl: job.thumbnailUrl,
         duration: duration,
-        playbackMode: AiLessonPlayback.educational,
+        playbackMode: AiLessonPlayback.video,
       );
-
-      unawaited(_renderMp4InBackground(
-        id: id,
-        lesson: result.lesson,
-        topic: job.topic,
-      ));
     } catch (e, st) {
       debugPrint('[AiLessonQueue] failed $id: $e\n$st');
       await _repo.markFailed(id: id, technicalError: '$e');
@@ -206,27 +247,6 @@ class AiLessonQueue {
       ext: isMp3 ? 'mp3' : 'wav',
     );
     return (path: path, duration: bundle.duration);
-  }
-
-  Future<void> _renderMp4InBackground({
-    required String id,
-    required GeneratedLesson lesson,
-    required String topic,
-  }) async {
-    if (kIsWeb) return;
-    try {
-      final rendered = await _pipeline.renderMp4(lesson: lesson, topic: topic);
-      final local = rendered?.videoPath ?? '';
-      if (local.isEmpty) return;
-      final uploaded = await _assets.uploadVideoFile(
-        lessonId: id,
-        localPath: local,
-      );
-      if (uploaded == null || uploaded.isEmpty) return;
-      await _repo.attachVideo(id: id, videoUrl: uploaded);
-    } catch (e) {
-      debugPrint('[AiLessonQueue] background MP4: $e');
-    }
   }
 }
 

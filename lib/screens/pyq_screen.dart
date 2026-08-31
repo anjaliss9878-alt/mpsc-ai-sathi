@@ -199,6 +199,16 @@ class _PyqScreenState extends State<PyqScreen> {
                       item.question,
                       style: const TextStyle(height: 1.45),
                     ),
+                    if (item.options.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      ...List.generate(item.options.length, (i) {
+                        final letter = String.fromCharCode(65 + i);
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Text('$letter. ${item.options[i]}'),
+                        );
+                      }),
+                    ],
                     if (item.answer.isNotEmpty) ...[
                       const SizedBox(height: 16),
                       const Text(

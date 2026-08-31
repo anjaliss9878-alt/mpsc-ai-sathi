@@ -4,6 +4,7 @@ import 'package:mpsc_combine_ai/models/chapter_item.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/chapter_lesson_loader.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/generated_lesson.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/verified_notes_lesson_composer.dart';
+import 'package:mpsc_combine_ai/services/ai_video_render/lesson_render_job_builder.dart';
 import 'package:mpsc_combine_ai/utils/firestore_payload.dart';
 
 void main() {
@@ -129,7 +130,7 @@ void main() {
         ),
       );
       expect(lesson.sourceKind, LessonSourceKind.verifiedNotes);
-      expect(lesson.slides.length, greaterThanOrEqualTo(15));
+      expect(lesson.slides.length, greaterThanOrEqualTo(kMinEduSlides));
       expect(
         lesson.slides.any((s) => s.visualType == SlideVisualType.table),
         isTrue,

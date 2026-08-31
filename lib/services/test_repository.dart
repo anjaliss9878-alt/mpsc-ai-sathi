@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:mpsc_combine_ai/models/content_index.dart';
 import 'package:mpsc_combine_ai/models/test_item.dart';
 
 /// Reads/writes Mock Test / CBT papers in Firestore at `tests/{id}`.
@@ -17,6 +18,30 @@ class TestRepository {
     return _ref.orderBy('order').snapshots().map(
           (snap) => snap.docs.map((d) => TestItem.fromMap(d.data(), d.id)).toList(),
         );
+  }
+
+  /// Student Tests / Mock Tests: published papers only. Legacy docs without
+  /// `published` parse as published so existing papers stay visible.
+  Stream<List<TestItem>> watchPublished() {
+    return watchAll().map(
+      (all) => all.where((t) => t.isStudentVisible).toList(),
+    );
+  }
+
+  Stream<List<TestItem>> watchForTopic(String topicId) {
+    if (topicId.isEmpty) return Stream.value(const []);
+    return watchAll().map(
+      (all) => all
+          .where(
+            (t) => contentLinkedToTopic(
+              topicId: topicId,
+              topicIdField: t.topicId,
+              chapterIdField: t.chapterId,
+              topicIds: t.topicIds,
+            ),
+          )
+          .toList(),
+    );
   }
 
   Future<TestItem?> getById(String id) async {

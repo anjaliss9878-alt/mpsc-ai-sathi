@@ -4,13 +4,14 @@ import 'package:mpsc_combine_ai/admin/notes/admin_subject_form_screen.dart';
 import 'package:mpsc_combine_ai/admin/widgets/admin_list_tile.dart';
 import 'package:mpsc_combine_ai/admin/widgets/admin_scaffold.dart';
 import 'package:mpsc_combine_ai/admin/widgets/confirm_delete_dialog.dart';
+import 'package:mpsc_combine_ai/models/exam_item.dart';
 import 'package:mpsc_combine_ai/models/subject_item.dart';
 import 'package:mpsc_combine_ai/services/audit_log_repository.dart';
 import 'package:mpsc_combine_ai/services/notes_repository.dart';
 import 'package:mpsc_combine_ai/services/storage_service.dart';
 import 'package:mpsc_combine_ai/widgets/async_state_widgets.dart';
 
-/// Admin Subjects list — add / edit / delete / publish, then open Topics.
+/// Admin Content Index — Exam → Subjects, then Chapters.
 class AdminSubjectsScreen extends StatefulWidget {
   const AdminSubjectsScreen({super.key});
 
@@ -20,11 +21,30 @@ class AdminSubjectsScreen extends StatefulWidget {
 
 class _AdminSubjectsScreenState extends State<AdminSubjectsScreen> {
   String _query = '';
+  String _examId = kDefaultExamId;
+  List<ExamItem> _exams = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadExams();
+  }
+
+  Future<void> _loadExams() async {
+    await notesRepository.ensureDefaultExam();
+    final exams = await notesRepository.getExamsOnce();
+    if (!mounted) return;
+    setState(() => _exams = exams);
+  }
 
   List<SubjectItem> _filter(List<SubjectItem> subjects) {
+    var list = subjects;
+    if (_examId.isNotEmpty) {
+      list = list.where((s) => s.examId == _examId || s.examId.isEmpty).toList();
+    }
     final q = _query.trim().toLowerCase();
-    if (q.isEmpty) return subjects;
-    return subjects.where((s) {
+    if (q.isEmpty) return list;
+    return list.where((s) {
       return s.title.toLowerCase().contains(q) ||
           s.subtitle.toLowerCase().contains(q) ||
           s.nameEn.toLowerCase().contains(q) ||
@@ -35,7 +55,7 @@ class _AdminSubjectsScreenState extends State<AdminSubjectsScreen> {
   @override
   Widget build(BuildContext context) {
     return AdminScaffold(
-      title: 'Subjects',
+      title: 'Content Index',
       floatingActionButton: FloatingActionButton(
         onPressed: () => Navigator.of(context).push(
           MaterialPageRoute<void>(builder: (_) => const AdminSubjectFormScreen()),
@@ -62,6 +82,22 @@ class _AdminSubjectsScreenState extends State<AdminSubjectsScreen> {
             children: [
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                child: DropdownButtonFormField<String>(
+                  value: _examId,
+                  decoration: const InputDecoration(labelText: 'Exam'),
+                  items: [
+                    for (final exam in _exams.isEmpty
+                        ? [ExamItem.mpscCombine()]
+                        : _exams)
+                      DropdownMenuItem(value: exam.id, child: Text(exam.title)),
+                  ],
+                  onChanged: (v) {
+                    if (v != null) setState(() => _examId = v);
+                  },
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                 child: TextField(
                   decoration: const InputDecoration(
                     hintText: 'Search subjects…',
@@ -75,7 +111,7 @@ class _AdminSubjectsScreenState extends State<AdminSubjectsScreen> {
                 child: Align(
                   alignment: Alignment.centerLeft,
                   child: Text(
-                    'Tap a subject to manage Topics. Drag ☰ to reorder.',
+                    'Tap a subject to manage Chapters. Drag ☰ to reorder. Eye toggles Active.',
                     style: TextStyle(color: Colors.grey, fontSize: 12),
                   ),
                 ),
@@ -120,11 +156,21 @@ class _AdminSubjectsScreenState extends State<AdminSubjectsScreen> {
                             key: ValueKey(subject.id),
                             title: subject.title,
                             subtitle:
-                                '${subject.published ? 'Published' : 'Draft'} · '
+                                '${subject.published ? 'Active' : 'Inactive'} · '
                                 'id=${subject.id}'
                                 '${subject.slug.isNotEmpty ? ' · ${subject.slug}' : ''}'
                                 '${subject.subtitle.isNotEmpty ? ' · ${subject.subtitle}' : ''}',
                             icon: subject.icon,
+                            isActive: subject.published,
+                            onToggleActive: () async {
+                              try {
+                                await notesRepository.updateSubject(
+                                  subject.copyWith(published: !subject.published),
+                                );
+                              } catch (e) {
+                                if (context.mounted) showAdminError(context, e);
+                              }
+                            },
                             onTap: () => Navigator.of(context).push(
                               MaterialPageRoute<void>(
                                 builder: (_) => AdminChaptersScreen(subject: subject),

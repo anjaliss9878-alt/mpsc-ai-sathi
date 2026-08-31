@@ -1,14 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:mpsc_combine_ai/models/ai_lesson.dart';
+import 'package:mpsc_combine_ai/models/daily_study_plan.dart';
 import 'package:mpsc_combine_ai/models/subject_item.dart';
 import 'package:mpsc_combine_ai/screens/ai_teacher_classroom/ai_teacher_classroom_screen.dart';
 import 'package:mpsc_combine_ai/screens/mcq_practice_screen.dart';
 import 'package:mpsc_combine_ai/screens/revision/revision_hub_screen.dart';
+import 'package:mpsc_combine_ai/screens/study_planner_screen.dart';
+import 'package:mpsc_combine_ai/screens/syllabus/syllabus_tracker_screen.dart';
 import 'package:mpsc_combine_ai/screens/topic_list_screen.dart';
+import 'package:mpsc_combine_ai/screens/weakness/ai_weakness_tracker_screen.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/ai_lesson_repository.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/lesson_progress_repository.dart';
 import 'package:mpsc_combine_ai/services/auth_service.dart';
 import 'package:mpsc_combine_ai/services/notes_repository.dart';
+import 'package:mpsc_combine_ai/services/student_progress_repository.dart';
+import 'package:mpsc_combine_ai/services/syllabus_progress_tracker.dart';
+import 'package:mpsc_combine_ai/services/ai_weakness_tracker.dart';
 import 'package:mpsc_combine_ai/theme/app_colors.dart';
 
 class HomeUpgradeSections extends StatelessWidget {
@@ -24,7 +31,7 @@ class HomeUpgradeSections extends StatelessWidget {
       children: [
         Padding(
           padding: EdgeInsets.fromLTRB(horizontalPadding, 8, horizontalPadding, 0),
-          child: const _MiniTitle('AI शिक्षक'),
+          child: const _MiniTitle('AI Teacher'),
         ),
         Padding(
           padding: EdgeInsets.fromLTRB(horizontalPadding, 10, horizontalPadding, 0),
@@ -32,7 +39,7 @@ class HomeUpgradeSections extends StatelessWidget {
         ),
         Padding(
           padding: EdgeInsets.fromLTRB(horizontalPadding, 24, horizontalPadding, 0),
-          child: const _MiniTitle('आजचा सराव'),
+          child: const _MiniTitle("Today's Practice"),
         ),
         Padding(
           padding: EdgeInsets.fromLTRB(horizontalPadding, 10, horizontalPadding, 0),
@@ -41,8 +48,8 @@ class HomeUpgradeSections extends StatelessWidget {
               Expanded(
                 child: _MiniActionCard(
                   icon: Icons.quiz_rounded,
-                  title: 'दैनिक MCQ',
-                  subtitle: 'आजचे प्रश्न सोडवा',
+                  title: 'Daily MCQ',
+                  subtitle: "Solve today's questions",
                   onTap: () => Navigator.of(context).push(
                     MaterialPageRoute<void>(builder: (_) => const McqPracticeScreen()),
                   ),
@@ -52,8 +59,8 @@ class HomeUpgradeSections extends StatelessWidget {
               Expanded(
                 child: _MiniActionCard(
                   icon: Icons.style_rounded,
-                  title: 'पुनरावृत्ती',
-                  subtitle: 'आजची आठवण',
+                  title: 'Revision',
+                  subtitle: "Today's recall",
                   onTap: () => Navigator.of(context).push(
                     MaterialPageRoute<void>(
                       builder: (_) => const RevisionHubScreen(),
@@ -64,10 +71,40 @@ class HomeUpgradeSections extends StatelessWidget {
             ],
           ),
         ),
+        if (uid != null)
+          Padding(
+            padding: EdgeInsets.fromLTRB(
+              horizontalPadding,
+              12,
+              horizontalPadding,
+              0,
+            ),
+            child: _TodayPlannerCard(uid: uid),
+          ),
+        if (uid != null)
+          Padding(
+            padding: EdgeInsets.fromLTRB(
+              horizontalPadding,
+              12,
+              horizontalPadding,
+              0,
+            ),
+            child: _SyllabusProgressCard(uid: uid),
+          ),
+        if (uid != null)
+          Padding(
+            padding: EdgeInsets.fromLTRB(
+              horizontalPadding,
+              12,
+              horizontalPadding,
+              0,
+            ),
+            child: _WeaknessTrackerCard(uid: uid),
+          ),
         if (uid != null) ...[
           Padding(
             padding: EdgeInsets.fromLTRB(horizontalPadding, 24, horizontalPadding, 0),
-            child: const _MiniTitle('अलीकडील AI धडे'),
+            child: const _MiniTitle('Recent AI Lessons'),
           ),
           SizedBox(
             height: 108,
@@ -84,7 +121,7 @@ class HomeUpgradeSections extends StatelessWidget {
                   return Padding(
                     padding: EdgeInsets.fromLTRB(horizontalPadding, 12, horizontalPadding, 0),
                     child: const Text(
-                      'अजून AI धडा नाही. विषय लिहून सुरू करा.',
+                      'No AI lessons yet. Enter a topic to start.',
                       style: TextStyle(color: AppColors.textSecondary),
                     ),
                   );
@@ -118,7 +155,7 @@ class HomeUpgradeSections extends StatelessWidget {
           ),
           Padding(
             padding: EdgeInsets.fromLTRB(horizontalPadding, 24, horizontalPadding, 0),
-            child: const _MiniTitle('विषयनिहाय प्रगती'),
+            child: const _MiniTitle('Progress by Subject'),
           ),
           Padding(
             padding: EdgeInsets.fromLTRB(horizontalPadding, 10, horizontalPadding, 0),
@@ -211,7 +248,7 @@ class _AiTeacherSearchCardState extends State<_AiTeacherSearchCard> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'कोणताही विषय लिहा — एका क्लिकमध्ये पूर्ण धडा',
+              'Enter any topic — get a complete lesson in one tap',
               style: TextStyle(fontWeight: FontWeight.w700, color: AppColors.textPrimary),
             ),
             const SizedBox(height: 10),
@@ -220,7 +257,7 @@ class _AiTeacherSearchCardState extends State<_AiTeacherSearchCard> {
               textInputAction: TextInputAction.go,
               onSubmitted: (_) => _go(),
               decoration: const InputDecoration(
-                hintText: 'उदा. गंगा नदी, महाराष्ट्रातील मृदा, संसद, मान्सून, भारतीय राज्यघटना',
+                hintText: 'e.g. Ganga River, soils of Maharashtra, Parliament, monsoon, Indian Constitution',
                 prefixIcon: Icon(Icons.psychology_rounded),
               ),
             ),
@@ -230,12 +267,262 @@ class _AiTeacherSearchCardState extends State<_AiTeacherSearchCard> {
               child: FilledButton(
                 onPressed: _go,
                 style: FilledButton.styleFrom(backgroundColor: AppColors.navy),
-                child: const Text('AI Lesson तयार करा'),
+                child: const Text('Create AI Lesson'),
               ),
             ),
           ],
         ),
       ),
+    );
+  }
+}
+
+class _TodayPlannerCard extends StatelessWidget {
+  const _TodayPlannerCard({required this.uid});
+
+  final String uid;
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<DailyStudyPlan?>(
+      stream: studentProgressRepository.watchDailyPlan(uid),
+      builder: (context, snapshot) {
+        final plan = snapshot.data;
+        final remaining = plan?.remainingTasks.length ?? 0;
+        final progress = plan?.progress ?? 0;
+        final subtitle = snapshot.hasError
+            ? 'Could not load the plan'
+            : plan == null
+                ? "Create today's personalized study plan"
+                : remaining == 0
+                    ? "Today's tasks complete"
+                    : '$remaining tasks left · ${(progress * 100).round()}%';
+        return Card(
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => const StudyPlannerScreen(),
+              ),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: AppColors.sky.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(
+                      Icons.edit_calendar_rounded,
+                      color: AppColors.sky,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          "Today's Study Plan",
+                          style: TextStyle(
+                            fontWeight: FontWeight.w800,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                        Text(
+                          subtitle,
+                          style: const TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 12.5,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Icon(
+                    Icons.chevron_right_rounded,
+                    color: AppColors.orange,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _SyllabusProgressCard extends StatefulWidget {
+  const _SyllabusProgressCard({required this.uid});
+
+  final String uid;
+
+  @override
+  State<_SyllabusProgressCard> createState() => _SyllabusProgressCardState();
+}
+
+class _SyllabusProgressCardState extends State<_SyllabusProgressCard> {
+  late final Stream<SyllabusProgressSnapshot> _stream =
+      syllabusProgressTracker.watch(widget.uid);
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<SyllabusProgressSnapshot>(
+      stream: _stream,
+      builder: (context, snapshot) {
+        final data = snapshot.data;
+        final subtitle = snapshot.hasError
+            ? 'Could not load progress'
+            : data == null
+                ? 'View syllabus progress'
+                : !data.hasSyllabus
+                    ? 'Progress will appear when subjects are published'
+                    : '${data.completedTopics}/${data.totalTopics} topics · ${data.overallPercent.round()}%';
+        return Card(
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => const SyllabusTrackerScreen(),
+              ),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: AppColors.navy.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(
+                      Icons.checklist_rounded,
+                      color: AppColors.navy,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Syllabus Progress',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w800,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                        Text(
+                          subtitle,
+                          style: const TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 12.5,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Icon(
+                    Icons.chevron_right_rounded,
+                    color: AppColors.orange,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _WeaknessTrackerCard extends StatefulWidget {
+  const _WeaknessTrackerCard({required this.uid});
+
+  final String uid;
+
+  @override
+  State<_WeaknessTrackerCard> createState() => _WeaknessTrackerCardState();
+}
+
+class _WeaknessTrackerCardState extends State<_WeaknessTrackerCard> {
+  late final Stream<WeaknessSnapshot> _stream =
+      aiWeaknessTracker.watch(widget.uid);
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<WeaknessSnapshot>(
+      stream: _stream,
+      builder: (context, snapshot) {
+        final data = snapshot.data;
+        final analysis = data?.analysis;
+        final subtitle = snapshot.hasError
+            ? 'Could not load analysis'
+            : analysis == null || !analysis.hasPerformance
+                ? 'Weak topics will appear after tests or quizzes'
+                : analysis.priorityWeakAreas.isEmpty
+                    ? 'No weak topics · accuracy ${analysis.overallAccuracy.round()}%'
+                    : '${analysis.priorityWeakAreas.length} weak topics · ${analysis.overallAccuracy.round()}%';
+        return Card(
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => const AiWeaknessTrackerScreen(),
+              ),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: AppColors.orange.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(
+                      Icons.insights_rounded,
+                      color: AppColors.orange,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'AI Weakness Tracker',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w800,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                        Text(
+                          subtitle,
+                          style: const TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 12.5,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Icon(
+                    Icons.chevron_right_rounded,
+                    color: AppColors.orange,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -247,12 +534,25 @@ class _MiniTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text(
-      title,
-      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-            fontWeight: FontWeight.w800,
-            color: AppColors.textPrimary,
+    return Row(
+      children: [
+        Container(
+          width: 4,
+          height: 20,
+          decoration: BoxDecoration(
+            color: AppColors.sky,
+            borderRadius: BorderRadius.circular(2),
           ),
+        ),
+        const SizedBox(width: 10),
+        Text(
+          title,
+          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w800,
+                color: AppColors.textPrimary,
+              ),
+        ),
+      ],
     );
   }
 }

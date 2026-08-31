@@ -4,9 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:mpsc_combine_ai/admin/bulk_upload/bulk_mcq_row.dart';
 import 'package:mpsc_combine_ai/admin/bulk_upload/spreadsheet_parser.dart';
 import 'package:mpsc_combine_ai/admin/widgets/admin_scaffold.dart';
+import 'package:mpsc_combine_ai/models/content_index.dart';
 import 'package:mpsc_combine_ai/models/mcq_item.dart';
 import 'package:mpsc_combine_ai/services/audit_log_repository.dart';
+import 'package:mpsc_combine_ai/services/content_index_resolver.dart';
 import 'package:mpsc_combine_ai/services/mcq_repository.dart';
+import 'package:mpsc_combine_ai/services/notes_repository.dart';
 import 'package:mpsc_combine_ai/theme/app_colors.dart';
 
 enum _Stage { pick, preview, uploading, done }
@@ -56,9 +59,10 @@ class _AdminBulkUploadScreenState extends State<AdminBulkUploadScreen> {
         setState(() => _pickError = 'No data rows found in this file.');
         return;
       }
+      final index = await ContentIndexResolver.load(notesRepository);
       final rows = <BulkMcqRow>[];
       for (var i = 0; i < parsed.length; i++) {
-        rows.add(BulkMcqRow.parse(i + 2, parsed[i])); // +2: header is row 1
+        rows.add(BulkMcqRow.parse(i + 2, parsed[i], index: index));
       }
       await _markDuplicates(rows);
       setState(() {
@@ -118,6 +122,13 @@ class _AdminBulkUploadScreenState extends State<AdminBulkUploadScreen> {
             explanation: row.explanation,
             order: 0,
             tags: row.tags,
+            subjectId: row.subjectId,
+            chapterId: row.chapterId,
+            published: false,
+            examId: row.examId,
+            targetGroup: row.targetGroup.isEmpty ? 'groupB' : row.targetGroup,
+            topicId: row.topicId,
+            status: NoteWorkflowStatus.draft,
           );
           batch.set(ref, item.toMap());
           refsThisChunk.add(ref);
@@ -133,7 +144,7 @@ class _AdminBulkUploadScreenState extends State<AdminBulkUploadScreen> {
         action: 'bulk-upload',
         module: 'MCQs',
         targetLabel: _fileName ?? 'upload',
-        details: '${writtenRefs.length} question(s) imported, $_duplicateCount skipped as duplicate, $_invalidCount invalid',
+        details: '${writtenRefs.length} question(s) imported as DRAFT, $_duplicateCount skipped as duplicate, $_invalidCount invalid',
       );
       setState(() => _stage = _Stage.done);
     } catch (e) {
@@ -189,7 +200,7 @@ class _AdminBulkUploadScreenState extends State<AdminBulkUploadScreen> {
             const Icon(Icons.upload_file_rounded, size: 56, color: AppColors.navy),
             const SizedBox(height: 16),
             const Text(
-              'Import MCQs from CSV or Excel (.xlsx)',
+              'Import MCQs from CSV or Excel (.xlsx)\nImported rows stay DRAFT until you publish.',
               style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
               textAlign: TextAlign.center,
             ),
@@ -297,7 +308,7 @@ class _AdminBulkUploadScreenState extends State<AdminBulkUploadScreen> {
               child: FilledButton.icon(
                 onPressed: _validCount == 0 ? null : _upload,
                 icon: const Icon(Icons.cloud_upload_rounded),
-                label: Text('Upload $_validCount question(s)'),
+                label: Text('Import $_validCount as DRAFT'),
               ),
             ),
           ),
@@ -336,7 +347,7 @@ class _AdminBulkUploadScreenState extends State<AdminBulkUploadScreen> {
             const Icon(Icons.check_circle_rounded, size: 56, color: Colors.green),
             const SizedBox(height: 16),
             Text(
-              '$_uploadedCount question(s) imported successfully.',
+              '$_uploadedCount question(s) imported as DRAFT.',
               style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
             ),
             const SizedBox(height: 4),

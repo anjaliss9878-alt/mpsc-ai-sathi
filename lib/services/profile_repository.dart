@@ -82,6 +82,21 @@ class ProfileRepository {
       'updatedAt': DateTime.now().toIso8601String(),
     }, SetOptions(merge: true));
   }
+
+  /// Daily planner prefs only — never touches admin fields like isBlocked.
+  Future<void> updatePlannerPrefs({
+    required String uid,
+    required String targetExam,
+    required String examDate,
+    required double dailyStudyHours,
+  }) async {
+    await _firestore.collection(studentsCollection).doc(uid).set({
+      'targetExam': targetExam,
+      'examDate': examDate,
+      'dailyStudyHours': dailyStudyHours.clamp(1, 12),
+      'updatedAt': DateTime.now().toIso8601String(),
+    }, SetOptions(merge: true));
+  }
 }
 
 /// Shared instance used by the Signup/Profile screens.

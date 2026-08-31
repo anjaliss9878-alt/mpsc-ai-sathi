@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:mpsc_combine_ai/admin/widgets/admin_scaffold.dart';
 import 'package:mpsc_combine_ai/admin/widgets/confirm_delete_dialog.dart';
+import 'package:mpsc_combine_ai/admin/widgets/content_index_picker.dart';
+import 'package:mpsc_combine_ai/admin/widgets/content_preview.dart';
+import 'package:mpsc_combine_ai/models/content_index.dart';
+import 'package:mpsc_combine_ai/models/exam_item.dart';
 import 'package:mpsc_combine_ai/models/test_item.dart';
 import 'package:mpsc_combine_ai/services/audit_log_repository.dart';
 import 'package:mpsc_combine_ai/services/test_repository.dart';
@@ -66,6 +70,20 @@ class _AdminTestFormScreenState extends State<AdminTestFormScreen> {
   late final List<_QuestionForm> _questions = widget.existing == null
       ? [_QuestionForm()]
       : widget.existing!.questions.map((q) => _QuestionForm(from: q)).toList();
+  late final _instructionsController =
+      TextEditingController(text: widget.existing?.instructions ?? '');
+  late NoteWorkflowStatus _status =
+      widget.existing?.status ?? NoteWorkflowStatus.draft;
+  late String _difficulty = widget.existing?.difficulty ?? 'Medium';
+  late ContentIndexSelection _index = ContentIndexSelection(
+    examId: widget.existing?.examId.isNotEmpty == true
+        ? widget.existing!.examId
+        : kDefaultExamId,
+    targetGroup: targetGroupFromString(widget.existing?.targetGroup),
+    subjectId: widget.existing?.subjectId ?? '',
+    chapterId: widget.existing?.chapterId ?? '',
+    topicId: widget.existing?.topicId ?? '',
+  );
   bool _isSaving = false;
 
   @override
@@ -75,6 +93,7 @@ class _AdminTestFormScreenState extends State<AdminTestFormScreen> {
     _durationController.dispose();
     _correctMarksController.dispose();
     _negativeMarksController.dispose();
+    _instructionsController.dispose();
     for (final q in _questions) {
       q.dispose();
     }
@@ -97,6 +116,10 @@ class _AdminTestFormScreenState extends State<AdminTestFormScreen> {
       showAdminMessage(context, 'Title is required.');
       return;
     }
+    if (!_index.isComplete) {
+      showAdminMessage(context, 'Select subject, chapter and topic.');
+      return;
+    }
     final questions = _questions.map((q) => q.toQuestion()).toList();
     if (questions.isEmpty ||
         questions.any(
@@ -117,6 +140,16 @@ class _AdminTestFormScreenState extends State<AdminTestFormScreen> {
         negativeMarks: double.tryParse(_negativeMarksController.text.trim()) ?? 0.5,
         questions: questions,
         order: widget.existing?.order ?? DateTime.now().millisecondsSinceEpoch,
+        examId: _index.examId,
+        targetGroup: targetGroupToString(_index.targetGroup),
+        subjectId: _index.subjectId,
+        chapterId: _index.chapterId,
+        topicId: _index.topicId,
+        topicIds: _index.topicId.isEmpty ? const [] : [_index.topicId],
+        difficulty: _difficulty,
+        instructions: _instructionsController.text.trim(),
+        published: contentWorkflowPublishedFlag(_status),
+        status: _status,
       );
       if (widget.existing == null) {
         await testRepository.add(test);
@@ -139,8 +172,19 @@ class _AdminTestFormScreenState extends State<AdminTestFormScreen> {
       title: widget.existing == null ? 'Add Test' : 'Edit Test',
       isSaving: _isSaving,
       onSave: _save,
-      saveLabel: 'Save Test',
+      saveLabel: _status == NoteWorkflowStatus.published ? 'Save & Publish' : 'Save Draft',
       children: [
+        const AdminSectionLabel(label: 'Content index'),
+        ContentIndexPicker(
+          initial: _index,
+          onChanged: (v) => _index = v,
+        ),
+        const SizedBox(height: 14),
+        WorkflowStatusDropdown(
+          value: _status,
+          onChanged: (v) => setState(() => _status = v),
+        ),
+        const SizedBox(height: 14),
         TextField(
           controller: _titleController,
           decoration: const InputDecoration(labelText: 'Test title (e.g. Full Mock Test #1)'),
@@ -180,6 +224,24 @@ class _AdminTestFormScreenState extends State<AdminTestFormScreen> {
             ),
           ],
         ),
+        const SizedBox(height: 14),
+        DropdownButtonFormField<String>(
+          value: _difficulty,
+          decoration: const InputDecoration(labelText: 'Difficulty'),
+          items: const [
+            DropdownMenuItem(value: 'Easy', child: Text('Easy')),
+            DropdownMenuItem(value: 'Medium', child: Text('Medium')),
+            DropdownMenuItem(value: 'Hard', child: Text('Hard')),
+          ],
+          onChanged: (v) => setState(() => _difficulty = v ?? 'Medium'),
+        ),
+        const SizedBox(height: 14),
+        TextField(
+          controller: _instructionsController,
+          minLines: 2,
+          maxLines: 4,
+          decoration: const InputDecoration(labelText: 'Instructions'),
+        ),
         AdminSectionLabel(
           label: 'Questions (${_questions.length})',
           trailing: TextButton.icon(
@@ -195,6 +257,36 @@ class _AdminTestFormScreenState extends State<AdminTestFormScreen> {
             onRemove: _questions.length > 1 ? () => _removeQuestion(index) : null,
           );
         }),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          onPressed: () {
+            final preview = TestItem(
+              id: widget.existing?.id ?? '',
+              title: _titleController.text.trim(),
+              subtitle: _subtitleController.text.trim(),
+              durationSeconds:
+                  (int.tryParse(_durationController.text.trim()) ?? 10) * 60,
+              correctMarks:
+                  double.tryParse(_correctMarksController.text.trim()) ?? 2.0,
+              negativeMarks:
+                  double.tryParse(_negativeMarksController.text.trim()) ?? 0.5,
+              questions: _questions.map((q) => q.toQuestion()).toList(),
+              order: 0,
+              examId: _index.examId,
+              targetGroup: targetGroupToString(_index.targetGroup),
+              subjectId: _index.subjectId,
+              chapterId: _index.chapterId,
+              topicId: _index.topicId,
+              difficulty: _difficulty,
+              instructions: _instructionsController.text.trim(),
+              published: contentWorkflowPublishedFlag(_status),
+              status: _status,
+            );
+            showTestPreview(context, preview);
+          },
+          icon: const Icon(Icons.visibility_outlined),
+          label: const Text('Preview'),
+        ),
       ],
     );
   }

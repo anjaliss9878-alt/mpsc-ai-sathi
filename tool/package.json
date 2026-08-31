@@ -1,0 +1,7 @@
+{
+  "name": "mpsc-firestore-rules-test",
+  "private": true,
+  "dependencies": {
+    "@firebase/rules-unit-testing": "^4.0.1"
+  }
+}
