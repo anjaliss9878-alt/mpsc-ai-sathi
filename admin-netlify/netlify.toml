@@ -1,0 +1,17 @@
+# Admin Panel site only. Student production uses the repo-root netlify.toml
+# and must not use this file (set this site's Base directory to admin-netlify).
+
+[build]
+  command = "bash ../tool/netlify_build_admin.sh"
+  publish = "../build/web3"
+
+[build.environment]
+  NODE_VERSION = "20"
+  FLUTTER_VERSION = "3.44.4"
+  CLASSROOM_VIDEO_WORKER = "https://mpscaisathi.co.in"
+
+# Flutter web SPA fallback
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

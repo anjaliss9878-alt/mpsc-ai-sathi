@@ -8,12 +8,18 @@ import 'package:mpsc_combine_ai/services/rag_backend_client.dart';
 
 void main() {
   test('production Netlify web build does not dart-define API secrets', () {
-    final script = File('tool/netlify_build.sh').readAsStringSync();
-    expect(script.contains('--dart-define="AI_API_KEY'), isFalse);
-    expect(script.contains('--dart-define=AI_API_KEY'), isFalse);
-    expect(script.contains('--dart-define="ELEVENLABS_API_KEY'), isFalse);
-    expect(script.contains('--dart-define=ELEVENLABS_API_KEY'), isFalse);
-    expect(RegExp(r'--dart-define=["' "'" r']?VERTEX_').hasMatch(script), isFalse);
+    for (final path in ['tool/netlify_build.sh', 'tool/netlify_build_admin.sh']) {
+      final script = File(path).readAsStringSync();
+      expect(script.contains('--dart-define="AI_API_KEY'), isFalse, reason: path);
+      expect(script.contains('--dart-define=AI_API_KEY'), isFalse, reason: path);
+      expect(script.contains('--dart-define="ELEVENLABS_API_KEY'), isFalse, reason: path);
+      expect(script.contains('--dart-define=ELEVENLABS_API_KEY'), isFalse, reason: path);
+      expect(
+        RegExp(r'--dart-define=["' "'" r']?VERTEX_').hasMatch(script),
+        isFalse,
+        reason: path,
+      );
+    }
     expect(
       const String.fromEnvironment('AI_API_KEY'),
       isEmpty,
