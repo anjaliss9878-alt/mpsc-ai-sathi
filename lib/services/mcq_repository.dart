@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:mpsc_combine_ai/models/content_index.dart';
 import 'package:mpsc_combine_ai/models/mcq_item.dart';
@@ -22,9 +24,7 @@ class McqRepository {
 
   /// Student practice: published workflow only. Drafts stay in Admin.
   Stream<List<McqItem>> watchPublished() {
-    return watchAll().map(
-      (all) => all.where((q) => q.isStudentVisible).toList(),
-    );
+    return _watchStudentVisible((q) => true);
   }
 
   /// MCQs whose [McqItem.subject] matches [subjectName] (case-insensitive),
@@ -34,42 +34,74 @@ class McqRepository {
     if (needle.isEmpty) {
       return Stream.value(const []);
     }
-    return watchAll().map(
-      (all) => all
-          .where((q) => q.isStudentVisible)
-          .where((q) => q.subject.trim().toLowerCase() == needle ||
-              q.subject.trim().toLowerCase().contains(needle) ||
-              needle.contains(q.subject.trim().toLowerCase()))
-          .toList(),
+    return _watchStudentVisible(
+      (q) =>
+          q.subject.trim().toLowerCase() == needle ||
+          q.subject.trim().toLowerCase().contains(needle) ||
+          needle.contains(q.subject.trim().toLowerCase()),
     );
   }
 
   /// MCQs linked to a Firestore chapter id (preferred over name matching).
   Stream<List<McqItem>> watchForChapter(String chapterId) {
     if (chapterId.isEmpty) return Stream.value(const []);
-    return watchAll().map(
-      (all) => all
-          .where(
-            (q) =>
-                q.isStudentVisible &&
-                contentLinkedToTopic(
-                  topicId: chapterId,
-                  topicIdField: q.topicId,
-                  chapterIdField: q.chapterId,
-                ),
-          )
-          .toList(),
+    return _watchStudentVisible(
+      (q) => contentLinkedToTopic(
+        topicId: chapterId,
+        topicIdField: q.topicId,
+        chapterIdField: q.chapterId,
+      ),
     );
   }
 
   /// MCQs for a subject id, published only.
   Stream<List<McqItem>> watchForSubjectId(String subjectId) {
     if (subjectId.isEmpty) return Stream.value(const []);
-    return watchAll().map(
-      (all) => all
-          .where((q) => q.isStudentVisible && q.subjectId == subjectId)
-          .toList(),
-    );
+    return _watchStudentVisible((q) => q.subjectId == subjectId);
+  }
+
+  Stream<List<McqItem>> _watchStudentVisible(bool Function(McqItem q) extra) {
+    return Stream.multi((controller) {
+      StreamSubscription<List<McqItem>>? sub;
+      var usingFallback = false;
+
+      List<McqItem> filter(List<McqItem> all) =>
+          all.where((q) => q.isStudentVisible && extra(q)).toList();
+
+      void listenPublished({required bool requirePublishedStatus}) {
+        Query<Map<String, dynamic>> query =
+            _ref.where('published', isEqualTo: true);
+        if (requirePublishedStatus) {
+          query = query.where('status', isEqualTo: 'published');
+        }
+        sub = query.snapshots().map((snap) {
+          final items = snap.docs
+              .map((d) => McqItem.fromMap(d.data(), d.id))
+              .toList()
+            ..sort((a, b) => a.order.compareTo(b.order));
+          return filter(items);
+        }).listen(
+          controller.add,
+          onError: (Object error, StackTrace stackTrace) {
+            if (!usingFallback &&
+                !requirePublishedStatus &&
+                error.toString().contains('permission-denied')) {
+              usingFallback = true;
+              sub?.cancel();
+              listenPublished(requirePublishedStatus: true);
+              return;
+            }
+            controller.addError(error, stackTrace);
+          },
+          onDone: controller.close,
+        );
+      }
+
+      listenPublished(requirePublishedStatus: false);
+      controller.onCancel = () async {
+        await sub?.cancel();
+      };
+    });
   }
 
   Future<String> add(McqItem item) async {

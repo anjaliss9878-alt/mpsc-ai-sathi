@@ -4,6 +4,8 @@ import 'package:mpsc_combine_ai/services/auth_service.dart';
 import 'package:mpsc_combine_ai/services/link_launcher.dart';
 import 'package:mpsc_combine_ai/services/pyq_repository.dart';
 import 'package:mpsc_combine_ai/services/student_progress_repository.dart';
+import 'package:mpsc_combine_ai/models/test_result.dart';
+import 'package:mpsc_combine_ai/services/test_result_repository.dart';
 import 'package:mpsc_combine_ai/theme/app_colors.dart';
 import 'package:mpsc_combine_ai/widgets/async_state_widgets.dart';
 
@@ -179,92 +181,7 @@ class _PyqScreenState extends State<PyqScreen> {
       await showModalBottomSheet<void>(
         context: context,
         isScrollControlled: true,
-        builder: (ctx) {
-          return SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      item.title,
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleLarge
-                          ?.copyWith(fontWeight: FontWeight.w700),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      item.question,
-                      style: const TextStyle(height: 1.45),
-                    ),
-                    if (item.options.isNotEmpty) ...[
-                      const SizedBox(height: 12),
-                      ...List.generate(item.options.length, (i) {
-                        final letter = String.fromCharCode(65 + i);
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 4),
-                          child: Text('$letter. ${item.options[i]}'),
-                        );
-                      }),
-                    ],
-                    if (item.answer.isNotEmpty) ...[
-                      const SizedBox(height: 16),
-                      const Text(
-                        'Answer',
-                        style: TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                      Text(item.answer),
-                    ],
-                    if (item.explanation.isNotEmpty) ...[
-                      const SizedBox(height: 12),
-                      const Text(
-                        'Explanation',
-                        style: TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                      Text(item.explanation),
-                    ],
-                    const SizedBox(height: 16),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: () async {
-                              final uid = authService.currentUser?.uid;
-                              if (uid == null) return;
-                              await studentProgressRepository.toggleBookmark(
-                                uid: uid,
-                                id: 'pyq_${item.id}',
-                                type: 'pyq',
-                                title: item.title,
-                                subtitle: item.subtitle,
-                                refId: item.id,
-                              );
-                              if (ctx.mounted) Navigator.pop(ctx);
-                            },
-                            icon: const Icon(Icons.bookmark_border_rounded),
-                            label: const Text('Bookmark'),
-                          ),
-                        ),
-                        if (item.fileUrl.isNotEmpty) ...[
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: FilledButton(
-                              onPressed: () =>
-                                  openExternalLink(context, item.fileUrl),
-                              child: const Text('Open PDF'),
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        },
+        builder: (ctx) => _StructuredPyqAttemptSheet(item: item),
       );
       return;
     }
@@ -275,5 +192,148 @@ class _PyqScreenState extends State<PyqScreen> {
       return;
     }
     await openExternalLink(context, item.fileUrl);
+  }
+}
+
+class _StructuredPyqAttemptSheet extends StatefulWidget {
+  const _StructuredPyqAttemptSheet({required this.item});
+
+  final PyqItem item;
+
+  @override
+  State<_StructuredPyqAttemptSheet> createState() =>
+      _StructuredPyqAttemptSheetState();
+}
+
+class _StructuredPyqAttemptSheetState extends State<_StructuredPyqAttemptSheet> {
+  int? _selected;
+  bool _saved = false;
+
+  PyqItem get item => widget.item;
+
+  Future<void> _persist() async {
+    if (_saved) return;
+    _saved = true;
+    await TestResultRepository.instance.savePracticeAttempt(
+      title: item.title.isNotEmpty ? item.title : 'PYQ',
+      kind: 'pyq',
+      subjectId: item.subjectId,
+      chapterId: item.chapterId,
+      questionResults: [
+        QuestionResult(
+          question: item.question,
+          options: item.options,
+          correctIndex: item.correctIndex,
+          selectedIndex: _selected,
+          explanation: item.explanation,
+        ),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final revealed = item.options.isEmpty || _selected != null;
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                item.title,
+                style: Theme.of(context)
+                    .textTheme
+                    .titleLarge
+                    ?.copyWith(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                item.question,
+                style: const TextStyle(height: 1.45),
+              ),
+              if (item.options.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                ...List.generate(item.options.length, (i) {
+                  final letter = String.fromCharCode(65 + i);
+                  final selected = _selected == i;
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: OutlinedButton(
+                      onPressed: _selected == null
+                          ? () {
+                              setState(() => _selected = i);
+                              _persist();
+                            }
+                          : null,
+                      style: OutlinedButton.styleFrom(
+                        alignment: Alignment.centerLeft,
+                        foregroundColor: selected
+                            ? (i == item.correctIndex
+                                ? Colors.green.shade800
+                                : Colors.red.shade700)
+                            : AppColors.navy,
+                      ),
+                      child: Text('$letter. ${item.options[i]}'),
+                    ),
+                  );
+                }),
+              ],
+              if (revealed && item.answer.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                const Text(
+                  'Answer',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+                Text(item.answer),
+              ],
+              if (revealed && item.explanation.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                const Text(
+                  'Explanation',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+                Text(item.explanation),
+              ],
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () async {
+                        final uid = authService.currentUser?.uid;
+                        if (uid == null) return;
+                        await studentProgressRepository.toggleBookmark(
+                          uid: uid,
+                          id: 'pyq_${item.id}',
+                          type: 'pyq',
+                          title: item.title,
+                          subtitle: item.subtitle,
+                          refId: item.id,
+                        );
+                        if (context.mounted) Navigator.pop(context);
+                      },
+                      icon: const Icon(Icons.bookmark_border_rounded),
+                      label: const Text('Bookmark'),
+                    ),
+                  ),
+                  if (item.fileUrl.isNotEmpty) ...[
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: () =>
+                            openExternalLink(context, item.fileUrl),
+                        child: const Text('Open PDF'),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }

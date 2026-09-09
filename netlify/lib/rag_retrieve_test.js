@@ -125,6 +125,38 @@ test('Processing/Failed parent sources are excluded', async () => {
   assert.deepEqual(out.hits.map((h) => h.chunk.id), ['ok']);
 });
 
+test('chapter-level chunks with empty topicId survive a matching chapter topic filter', async () => {
+  setRetrieveHooksForTests({
+    embedQuery: async () => ({ values: vec(0.9), provider: 'vertex' }),
+    findNearest: async () => [
+      chunk({
+        id: 'chapter-pdf',
+        sourceId: 's1',
+        text: 'Constitution making',
+        topicId: '',
+        chapterId: 'fr',
+        embedding: vec(0.95),
+      }),
+      chunk({
+        id: 'other-chapter',
+        sourceId: 's1',
+        text: 'Constitution making',
+        topicId: '',
+        chapterId: 'dp',
+        embedding: vec(0.94),
+      }),
+    ],
+    getSources: async () => [{ id: 's1', published: true, status: 'Ready' }],
+  });
+  const out = await retrieveRag({
+    query: 'Constitution making',
+    chapterId: 'fr',
+    topicId: 'making',
+    hybrid: false,
+  });
+  assert.deepEqual(out.hits.map((h) => h.chunk.id), ['chapter-pdf']);
+});
+
 test('wrong exam and topic are excluded', async () => {
   setRetrieveHooksForTests({
     embedQuery: async () => ({ values: vec(0.9), provider: 'vertex' }),

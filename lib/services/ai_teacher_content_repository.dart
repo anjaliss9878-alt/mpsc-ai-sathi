@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:mpsc_combine_ai/models/ai_teacher_content_item.dart';
 
@@ -23,9 +25,47 @@ class AiTeacherContentRepository {
   }
 
   Stream<List<AiTeacherContentItem>> watchPublished() {
-    return watchAll().map(
-      (all) => all.where((l) => l.isStudentVisible).toList(),
-    );
+    return Stream.multi((controller) {
+      StreamSubscription<List<AiTeacherContentItem>>? sub;
+      var usingFallback = false;
+
+      List<AiTeacherContentItem> filter(List<AiTeacherContentItem> all) =>
+          all.where((l) => l.isStudentVisible).toList();
+
+      void listenPublished({required bool requirePublishedStatus}) {
+        Query<Map<String, dynamic>> query =
+            _ref.where('published', isEqualTo: true);
+        if (requirePublishedStatus) {
+          query = query.where('status', isEqualTo: 'published');
+        }
+        sub = query.snapshots().map((snap) {
+          return filter(
+            snap.docs
+                .map((d) => AiTeacherContentItem.fromMap(d.data(), d.id))
+                .toList(),
+          );
+        }).listen(
+          controller.add,
+          onError: (Object error, StackTrace stackTrace) {
+            if (!usingFallback &&
+                !requirePublishedStatus &&
+                error.toString().contains('permission-denied')) {
+              usingFallback = true;
+              sub?.cancel();
+              listenPublished(requirePublishedStatus: true);
+              return;
+            }
+            controller.addError(error, stackTrace);
+          },
+          onDone: controller.close,
+        );
+      }
+
+      listenPublished(requirePublishedStatus: false);
+      controller.onCancel = () async {
+        await sub?.cancel();
+      };
+    });
   }
 
   Future<String> add(AiTeacherContentItem item) async {
@@ -47,10 +87,8 @@ class AiTeacherContentRepository {
   Future<AiTeacherContentItem?> findMatchingLesson(String question) async {
     final normalized = question.toLowerCase();
     if (normalized.trim().isEmpty) return null;
-    final snap = await _ref.get();
-    for (final doc in snap.docs) {
-      final item = AiTeacherContentItem.fromMap(doc.data(), doc.id);
-      if (!item.isStudentVisible) continue;
+    final items = await _studentPublishedOnce();
+    for (final item in items) {
       for (final keyword in item.keywords) {
         if (keyword.trim().isEmpty) continue;
         if (normalized.contains(keyword.toLowerCase().trim())) {
@@ -59,6 +97,26 @@ class AiTeacherContentRepository {
       }
     }
     return null;
+  }
+
+  Future<List<AiTeacherContentItem>> _studentPublishedOnce() async {
+    try {
+      final snap = await _ref.where('published', isEqualTo: true).get();
+      return snap.docs
+          .map((d) => AiTeacherContentItem.fromMap(d.data(), d.id))
+          .where((l) => l.isStudentVisible)
+          .toList();
+    } catch (error) {
+      if (!error.toString().contains('permission-denied')) rethrow;
+      final snap = await _ref
+          .where('published', isEqualTo: true)
+          .where('status', isEqualTo: 'published')
+          .get();
+      return snap.docs
+          .map((d) => AiTeacherContentItem.fromMap(d.data(), d.id))
+          .where((l) => l.isStudentVisible)
+          .toList();
+    }
   }
 }
 

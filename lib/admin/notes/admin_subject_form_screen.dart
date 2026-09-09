@@ -91,6 +91,8 @@ class _AdminSubjectFormScreenState extends State<AdminSubjectFormScreen> {
         slug: slug,
         nameEn: nameEn,
         examId: _examId,
+        stageId: existing?.stageId ?? '',
+        paperId: existing?.paperId ?? '',
         published: _published,
       );
 

@@ -3,16 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:mpsc_combine_ai/models/student_profile.dart';
 import 'package:mpsc_combine_ai/services/auth_service.dart';
 import 'package:mpsc_combine_ai/services/profile_repository.dart';
+import 'package:mpsc_combine_ai/theme/app_brand.dart';
 import 'package:mpsc_combine_ai/widgets/auth_widgets.dart';
-
-/// Common MPSC Combine exam categories offered on Signup/Profile.
-const List<String> targetExamOptions = [
-  'राज्यसेवा (Rajyaseva)',
-  'संयुक्त पूर्व परीक्षा गट ब (Combine Group B)',
-  'संयुक्त पूर्व परीक्षा गट क (Combine Group C)',
-  'PSI / STI / ASO',
-  'इतर (Other)',
-];
+import 'package:mpsc_combine_ai/widgets/target_exam_select_field.dart';
 
 class SignupScreen extends StatefulWidget {
   const SignupScreen({super.key});
@@ -82,6 +75,8 @@ class _SignupScreenState extends State<SignupScreen> {
           email: _emailController.text.trim(),
           mobile: _mobileController.text.trim(),
           targetExam: _targetExam ?? '',
+          onboardingCompleted: false,
+          diagnosticCompleted: false,
         ),
       );
     } catch (_) {
@@ -118,8 +113,9 @@ class _SignupScreenState extends State<SignupScreen> {
   Widget build(BuildContext context) {
     return AuthScaffold(
       title: 'नवीन खाते तयार करा',
-      subtitle: 'MPSC COMBINE AI सह अभ्यास सुरू करा',
+      subtitle: '$kAppName सह अभ्यास सुरू करा',
       icon: Icons.person_add_alt_1_rounded,
+      showBrandLogo: true,
       showBackButton: true,
       child: Form(
         key: _formKey,
@@ -172,20 +168,10 @@ class _SignupScreenState extends State<SignupScreen> {
               },
             ),
             const SizedBox(height: 14),
-            DropdownButtonFormField<String>(
-              initialValue: _targetExam,
-              decoration: const InputDecoration(
-                labelText: 'लक्ष्य परीक्षा (Target Exam)',
-                prefixIcon: Icon(Icons.flag_outlined),
-              ),
-              items: targetExamOptions
-                  .map((exam) => DropdownMenuItem(value: exam, child: Text(exam)))
-                  .toList(),
-              onChanged: _isLoading
-                  ? null
-                  : (value) => setState(() => _targetExam = value),
-              validator: (value) =>
-                  value == null ? 'लक्ष्य परीक्षा निवडा' : null,
+            TargetExamSelectField(
+              value: _targetExam,
+              enabled: !_isLoading,
+              onChanged: (value) => setState(() => _targetExam = value),
             ),
             const SizedBox(height: 14),
             TextFormField(

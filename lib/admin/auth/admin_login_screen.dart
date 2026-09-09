@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:mpsc_combine_ai/services/auth_service.dart';
+import 'package:mpsc_combine_ai/theme/app_brand.dart';
 import 'package:mpsc_combine_ai/theme/app_colors.dart';
+import 'package:mpsc_combine_ai/widgets/app_brand_logo.dart';
 
 /// Email/password login for the Admin Panel.
 ///
@@ -71,25 +73,21 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: AppColors.navy,
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: const Icon(
-                        Icons.admin_panel_settings_rounded,
-                        color: AppColors.orange,
-                        size: 40,
-                      ),
-                    ),
+                    const Center(child: AppBrandLogo(size: 96, borderRadius: 20)),
                     const SizedBox(height: 20),
                     Text(
-                      'MPSC COMBINE AI',
+                      kAppName,
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                             fontWeight: FontWeight.w800,
                             color: AppColors.textPrimary,
+                          ),
+                    ),
+                    Text(
+                      kAppTagline,
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: AppColors.textSecondary,
                           ),
                     ),
                     Text(

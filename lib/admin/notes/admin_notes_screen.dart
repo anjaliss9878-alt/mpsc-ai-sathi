@@ -189,6 +189,10 @@ class _AdminNotesScreenState extends State<AdminNotesScreen> {
                                   await confirmDelete(context, label);
                               if (!confirmed) return;
                               try {
+                                await noteRagIndexer.deleteLinkedRag(
+                                  note,
+                                  patchNote: false,
+                                );
                                 await notesRepository.deleteNote(note.id);
                                 await auditLogRepository.log(
                                   action: 'delete',

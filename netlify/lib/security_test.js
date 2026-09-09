@@ -16,6 +16,7 @@ const {
   isOriginAllowed,
   corsHeaders,
   json,
+  ADMIN_DEBUG_ORIGINS,
 } = require('./cors');
 const {
   setAuthHooksForTests,
@@ -239,6 +240,17 @@ test('CORS is origin-restricted and never *', () => {
   assert.equal(allowed['Access-Control-Allow-Origin'], studentOrigin);
   assert.match(allowed['Access-Control-Allow-Headers'], /Authorization/);
 
+  const adminOrigin = 'https://mpsc-ai-admin.netlify.app';
+  assert.equal(
+    isOriginAllowed(adminOrigin, { headers: { host: 'mpscaisathi.co.in' } }),
+    true,
+  );
+  const adminHeaders = corsHeaders({
+    headers: { origin: adminOrigin, host: 'mpscaisathi.co.in' },
+  });
+  assert.equal(adminHeaders['Access-Control-Allow-Origin'], adminOrigin);
+  assert.notEqual(adminHeaders['Access-Control-Allow-Origin'], '*');
+
   const sameOrigin = corsHeaders({
     headers: {
       origin: 'https://mpsc-ai.netlify.app',
@@ -246,6 +258,30 @@ test('CORS is origin-restricted and never *', () => {
     },
   });
   assert.equal(sameOrigin['Access-Control-Allow-Origin'], 'https://mpsc-ai.netlify.app');
+
+  const localAdmin = 'http://localhost:8081';
+  assert.equal(
+    isOriginAllowed(localAdmin, { headers: { host: 'mpscaisathi.co.in' } }),
+    true,
+  );
+  const localHeaders = corsHeaders({
+    headers: { origin: localAdmin, host: 'mpscaisathi.co.in' },
+  });
+  assert.equal(localHeaders['Access-Control-Allow-Origin'], localAdmin);
+  assert.notEqual(localHeaders['Access-Control-Allow-Origin'], '*');
+
+  for (const debugOrigin of ADMIN_DEBUG_ORIGINS) {
+    assert.equal(
+      isOriginAllowed(debugOrigin, { headers: { host: 'mpscaisathi.co.in' } }),
+      true,
+      debugOrigin,
+    );
+    const h = corsHeaders({
+      headers: { origin: debugOrigin, host: 'mpscaisathi.co.in' },
+    });
+    assert.equal(h['Access-Control-Allow-Origin'], debugOrigin);
+    assert.notEqual(h['Access-Control-Allow-Origin'], '*');
+  }
 
   const body = json(401, { error: 'unauthenticated' }, {
     headers: { origin, host: 'mpsc-ai.netlify.app' },
@@ -263,6 +299,37 @@ test('API secrets are not in the production Flutter web build script', () => {
   assert.equal(/--dart-define=["']?ELEVENLABS_API_KEY/.test(script), false);
   assert.equal(/--dart-define=["']?VERTEX_/.test(script), false);
   assert.match(script, /Does NOT pass AI_API_KEY/);
+});
+
+test('Admin web build points RAG at Student origin and does not dart-define secrets', () => {
+  const script = fs.readFileSync(
+    path.join(__dirname, '..', '..', 'tool', 'netlify_build_admin.sh'),
+    'utf8',
+  );
+  assert.match(script, /RAG_BACKEND_URL/);
+  assert.match(script, /--dart-define="RAG_BACKEND_URL=/);
+  assert.equal(/--dart-define=["']?AI_API_KEY/.test(script), false);
+  assert.equal(/--dart-define=["']?ELEVENLABS_API_KEY/.test(script), false);
+  assert.equal(/--dart-define=["']?VERTEX_/.test(script), false);
+  assert.equal(/--dart-define=["']?GEMINI/.test(script), false);
+  const toml = fs.readFileSync(
+    path.join(__dirname, '..', '..', 'admin-netlify', 'netlify.toml'),
+    'utf8',
+  );
+  assert.match(toml, /RAG_BACKEND_URL = "https:\/\/mpscaisathi\.co\.in"/);
+});
+
+test('student /rag/embed and /rag/learn prefer Vertex then Gemini', () => {
+  const embed = fs.readFileSync(
+    path.join(__dirname, '..', 'functions', 'rag-embed.js'),
+    'utf8',
+  );
+  const learn = fs.readFileSync(
+    path.join(__dirname, '..', 'functions', 'rag-learn.js'),
+    'utf8',
+  );
+  assert.match(embed, /embedTextsPreferVertex/);
+  assert.match(learn, /learnGroundedPreferVertex/);
 });
 
 test('invalid Firebase ID token → 401', async () => {

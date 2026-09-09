@@ -8,7 +8,7 @@ void main() {
     await tester.pumpWidget(const MaterialApp(home: LoginScreen()));
     await tester.pump();
 
-    expect(find.text('MPSC COMBINE AI'), findsOneWidget);
+    expect(find.text('MPSC AI SATHI'), findsOneWidget);
     expect(find.textContaining('लॉगिन'), findsWidgets);
     expect(find.byType(TextFormField), findsAtLeastNWidgets(2));
   });
@@ -17,6 +17,7 @@ void main() {
     await tester.pumpWidget(const MaterialApp(home: AdminLoginScreen()));
     await tester.pump();
 
+    expect(find.text('MPSC AI SATHI'), findsOneWidget);
     expect(find.textContaining('Admin'), findsWidgets);
     expect(find.textContaining('Sign In'), findsOneWidget);
     expect(find.byType(TextFormField), findsAtLeastNWidgets(2));

@@ -1,3 +1,4 @@
+import 'package:mpsc_combine_ai/data/student_onboarding.dart';
 import 'package:mpsc_combine_ai/models/exam_item.dart';
 import 'package:mpsc_combine_ai/models/multi_rag_result.dart';
 import 'package:mpsc_combine_ai/models/student_profile.dart';
@@ -22,7 +23,7 @@ class StudentRagAccessException implements Exception {
 class StudentRagContext {
   const StudentRagContext({
     required this.uid,
-    this.examId = kDefaultExamId,
+    this.examId = kGroupBCombinedExamId,
     this.targetExam = '',
     this.performance = const [],
     this.weakTopics = const [],
@@ -132,7 +133,7 @@ class StudentRagContextService {
 
     final syllabus = await _syllabus.load(uid);
     final weakness = await _weakness.load(uid, syllabus: syllabus);
-    final examId = kDefaultExamId;
+    final examId = examIdFromStudentTargetExam(profile?.targetExam ?? '');
 
     return StudentRagContext(
       uid: uid,

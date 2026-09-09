@@ -8,18 +8,17 @@ import 'package:http/http.dart' as http;
 /// Returns WAV bytes (PCM16 mono) suitable for FFmpeg concat/mux.
 class GeminiTtsSynthesizer {
   GeminiTtsSynthesizer({http.Client? client, String? apiKey})
-      : _client = client ?? http.Client(),
-        _apiKey = (apiKey ?? _envApiKey).trim();
+    : _client = client ?? http.Client(),
+      _apiKey = (apiKey ?? '').trim();
 
   final http.Client _client;
   final String _apiKey;
 
-  static const String _envApiKey = String.fromEnvironment('AI_API_KEY');
-  static const String _modelOverride = String.fromEnvironment('GEMINI_TTS_MODEL');
+  static const String _modelOverride = String.fromEnvironment(
+    'GEMINI_TTS_MODEL',
+  );
 
-  static const _models = <String>[
-    'gemini-3.1-flash-tts-preview',
-  ];
+  static const _models = <String>['gemini-3.1-flash-tts-preview'];
 
   bool get isConfigured => _apiKey.trim().isNotEmpty;
 
@@ -50,7 +49,7 @@ class GeminiTtsSynthesizer {
   /// Three attempts with exponential backoff. Stores the last exact error.
   Future<Uint8List> synthesizeMarathiFacultyWithRetry(
     String text, {
-    int attempts = 1,
+    int attempts = 3,
   }) async {
     Object? lastError;
     for (var i = 0; i < attempts; i++) {
@@ -89,7 +88,12 @@ class GeminiTtsSynthesizer {
     final header = BytesBuilder();
     void writeString(String s) => header.add(utf8.encode(s));
     void writeUint32(int v) {
-      header.add([v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >> 24) & 0xff]);
+      header.add([
+        v & 0xff,
+        (v >> 8) & 0xff,
+        (v >> 16) & 0xff,
+        (v >> 24) & 0xff,
+      ]);
     }
 
     void writeUint16(int v) {
@@ -143,9 +147,7 @@ class GeminiTtsSynthesizer {
         'responseModalities': ['AUDIO'],
         'speechConfig': {
           'voiceConfig': {
-            'prebuiltVoiceConfig': {
-              'voiceName': 'Kore',
-            },
+            'prebuiltVoiceConfig': {'voiceName': 'Kore'},
           },
         },
       },
@@ -160,7 +162,7 @@ class GeminiTtsSynthesizer {
           },
           body: body,
         )
-          .timeout(const Duration(seconds: 90));
+        .timeout(const Duration(seconds: 90));
 
     if (response.statusCode != 200) {
       final snippet = response.body.length > 220
@@ -182,58 +184,48 @@ class GeminiTtsSynthesizer {
     if (parts is! List || parts.isEmpty) {
       throw StateError('Gemini TTS returned no audio parts ($model)');
     }
-    final inline = (parts.first as Map)['inlineData'] ??
+    final inline =
+        (parts.first as Map)['inlineData'] ??
         (parts.first as Map)['inline_data'];
     if (inline is! Map) {
       throw StateError('Gemini TTS missing inline audio data ($model)');
     }
     final b64 = (inline['data'] as String?) ?? '';
-    final mime = (inline['mimeType'] as String?) ??
+    final mime =
+        (inline['mimeType'] as String?) ??
         (inline['mime_type'] as String?) ??
         'audio/L16;rate=24000';
     if (b64.isEmpty) {
       throw StateError('Gemini TTS empty audio payload ($model)');
     }
-    final pcm = base64Decode(b64);
-    final rate = _parseRate(mime) ?? 24000;
-    return _pcm16ToWav(Uint8List.fromList(pcm), sampleRate: rate);
+    final raw = Uint8List.fromList(base64Decode(b64));
+    return ensureWav(raw, mimeType: mime);
   }
 
-  int? _parseRate(String mime) {
-    final m = RegExp(r'rate=(\d+)').firstMatch(mime);
+  /// True when [bytes] is already a RIFF/WAVE container.
+  static bool isWavContainer(Uint8List bytes) {
+    if (bytes.length < 12) return false;
+    return bytes[0] == 0x52 &&
+        bytes[1] == 0x49 &&
+        bytes[2] == 0x46 &&
+        bytes[3] == 0x46 &&
+        bytes[8] == 0x57 &&
+        bytes[9] == 0x41 &&
+        bytes[10] == 0x56 &&
+        bytes[11] == 0x45;
+  }
+
+  /// Wrap raw PCM16 as WAV. Pass through existing WAV (never double-wrap).
+  static Uint8List ensureWav(Uint8List bytes, {String mimeType = ''}) {
+    if (bytes.isEmpty) return bytes;
+    if (isWavContainer(bytes)) return bytes;
+    final rate = parseSampleRate(mimeType) ?? 24000;
+    return _pcm16ToWavStatic(bytes, sampleRate: rate);
+  }
+
+  static int? parseSampleRate(String mime) {
+    final m = RegExp(r'rate=(\d+)', caseSensitive: false).firstMatch(mime);
     if (m == null) return null;
     return int.tryParse(m.group(1)!);
-  }
-
-  Uint8List _pcm16ToWav(Uint8List pcm, {required int sampleRate}) {
-    final dataLength = pcm.length;
-    final byteRate = sampleRate * 2; // mono 16-bit
-    final header = BytesBuilder();
-    void writeString(String s) => header.add(utf8.encode(s));
-    void writeUint32(int v) {
-      header.add([v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >> 24) & 0xff]);
-    }
-
-    void writeUint16(int v) {
-      header.add([v & 0xff, (v >> 8) & 0xff]);
-    }
-
-    writeString('RIFF');
-    writeUint32(36 + dataLength);
-    writeString('WAVE');
-    writeString('fmt ');
-    writeUint32(16); // PCM chunk size
-    writeUint16(1); // PCM
-    writeUint16(1); // mono
-    writeUint32(sampleRate);
-    writeUint32(byteRate);
-    writeUint16(2); // block align
-    writeUint16(16); // bits
-    writeString('data');
-    writeUint32(dataLength);
-    final out = BytesBuilder(copy: false)
-      ..add(header.takeBytes())
-      ..add(pcm);
-    return out.takeBytes();
   }
 }

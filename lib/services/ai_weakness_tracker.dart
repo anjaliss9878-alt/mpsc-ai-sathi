@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:mpsc_combine_ai/data/student_curriculum.dart';
+import 'package:mpsc_combine_ai/data/student_onboarding.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/lesson_progress_repository.dart';
 import 'package:mpsc_combine_ai/services/profile_repository.dart';
 import 'package:mpsc_combine_ai/services/student_progress_repository.dart';
@@ -40,11 +42,21 @@ class WeakTopicSignal {
   final WeaknessBand band;
   final PerformanceTrend trend;
 
-  bool isWeakFor(WeaknessThresholds thresholds) =>
-      scorePercent < thresholds.improvingMin;
+  bool isWeakFor(WeaknessThresholds thresholds) {
+    if (band == WeaknessBand.strong || band == WeaknessBand.improving) {
+      return false;
+    }
+    if (band.isWeakLike) return true;
+    if (attempted <= 0 && scorePercent == 0) return false;
+    return scorePercent < thresholds.improvingMin;
+  }
 
-  bool isStrongFor(WeaknessThresholds thresholds) =>
-      scorePercent >= thresholds.strongMin;
+  bool isStrongFor(WeaknessThresholds thresholds) {
+    if (band == WeaknessBand.strong) return true;
+    if (band.isWeakLike || band == WeaknessBand.improving) return false;
+    if (attempted <= 0 && scorePercent == 0) return false;
+    return scorePercent >= thresholds.strongMin;
+  }
 
   bool get isWeak => isWeakFor(WeaknessThresholds.defaults);
 
@@ -88,7 +100,7 @@ class WeaknessSnapshot {
 
   bool get hasPerformance =>
       analysis?.hasPerformance == true ||
-      signals.any((s) => s.attempted > 0 || s.scorePercent > 0);
+      signals.any((s) => s.attempted > 0);
 }
 
 /// Scores weak/strong topics from existing test attempts + classroom quizzes
@@ -136,9 +148,7 @@ class FirestoreAiWeaknessTracker implements AiWeaknessTracker {
     DateTime? now,
   }) async {
     final clock = now ?? DateTime.now();
-    final topics = syllabus ?? await _syllabusTracker.load(uid);
-    final attempts = await _progress.getTestAttempts(uid);
-    final classroom = await _classroom.getAllOnce(uid);
+    var topics = syllabus ?? await _syllabusTracker.load(uid);
     var targetExam = '';
     try {
       final profile = await (_profiles ?? profileRepository).getProfile(uid);
@@ -146,6 +156,9 @@ class FirestoreAiWeaknessTracker implements AiWeaknessTracker {
     } catch (_) {
       targetExam = '';
     }
+    topics = _withCurriculum(topics, targetExam);
+    final attempts = await _progress.getTestAttempts(uid);
+    final classroom = await _classroom.getAllOnce(uid);
     return _fromSources(
       attempts: attempts,
       classroom: classroom,
@@ -170,7 +183,7 @@ class FirestoreAiWeaknessTracker implements AiWeaknessTracker {
             _fromSources(
               attempts: attempts!,
               classroom: classroom!,
-              syllabus: syllabus!,
+              syllabus: _withCurriculum(syllabus!, targetExam),
               now: now ?? DateTime.now(),
               targetExam: targetExam,
             ),
@@ -230,12 +243,6 @@ class FirestoreAiWeaknessTracker implements AiWeaknessTracker {
     final samples = <PerformanceSample>[];
     for (final attempt in attempts) {
       if (attempt.totalQuestions <= 0 && attempt.attempted <= 0) continue;
-      final match = matchSyllabusTopic(
-        title: attempt.testTitle,
-        topics: syllabus.topics,
-      );
-      final attempted =
-          attempt.attempted > 0 ? attempt.attempted : attempt.totalQuestions;
       var source = attempt.kind.trim().isEmpty ? 'test' : attempt.kind.trim();
       if (source == 'test') {
         final hay = attempt.testTitle.toLowerCase();
@@ -243,6 +250,31 @@ class FirestoreAiWeaknessTracker implements AiWeaknessTracker {
           source = 'pyq';
         }
       }
+      SyllabusTopicProgress? match;
+      if (attempt.chapterId.isNotEmpty) {
+        for (final t in syllabus.topics) {
+          if (t.chapterId == attempt.chapterId) {
+            match = t;
+            break;
+          }
+        }
+      } else if (source == 'pyq') {
+        match = matchSyllabusTopic(
+          title: attempt.testTitle,
+          topics: syllabus.topics,
+          requireUniqueChapterTitle: true,
+        );
+      } else {
+        match = matchSyllabusTopic(
+          title: attempt.testTitle,
+          topics: syllabus.topics,
+        );
+      }
+      final attempted =
+          attempt.attempted > 0 ? attempt.attempted : attempt.totalQuestions;
+      final areaId = attempt.areaId.isNotEmpty
+          ? attempt.areaId
+          : (match?.plannerAreaId ?? '');
       samples.add(
         PerformanceSample(
           at: attempt.dateTime,
@@ -258,7 +290,10 @@ class FirestoreAiWeaknessTracker implements AiWeaknessTracker {
           chapterId: attempt.chapterId.isNotEmpty
               ? attempt.chapterId
               : (match?.chapterId ?? ''),
-          subjectTitle: match?.subjectTitle ?? '',
+          subjectTitle: match?.plannerSubjectTitle.isNotEmpty == true
+              ? match!.plannerSubjectTitle
+              : (areaId.isNotEmpty ? syllabusAreaTitle(areaId) : ''),
+          areaId: areaId,
         ),
       );
     }
@@ -284,7 +319,7 @@ class FirestoreAiWeaknessTracker implements AiWeaknessTracker {
           label: prog.topicName.isNotEmpty ? prog.topicName : 'Classroom quiz',
           subjectId: match?.subjectId ?? prog.subjectId,
           chapterId: prog.chapterId,
-          subjectTitle: match?.subjectTitle ?? '',
+          subjectTitle: match?.plannerSubjectTitle ?? '',
         ),
       );
     }
@@ -304,7 +339,7 @@ class FirestoreAiWeaknessTracker implements AiWeaknessTracker {
         if (topic.hasPerformance)
           WeakTopicSignal(
             label: topic.label,
-            scorePercent: topic.accuracyPercent,
+            scorePercent: topic.latestPercent,
             source: topic.sources.isEmpty ? 'test' : topic.sources.first,
             subjectId: topic.subjectId,
             chapterId: topic.chapterId,
@@ -342,6 +377,19 @@ class FirestoreAiWeaknessTracker implements AiWeaknessTracker {
       analysis: analyzed,
       thresholds: thresholds,
     );
+  }
+
+  SyllabusProgressSnapshot _withCurriculum(
+    SyllabusProgressSnapshot loaded,
+    String targetExam,
+  ) {
+    if (!loaded.hasSyllabus) {
+      if (isGroupBCombinedTargetExam(targetExam) || targetExam.trim().isEmpty) {
+        return groupBFallbackSyllabus();
+      }
+      return loaded;
+    }
+    return loaded;
   }
 }
 

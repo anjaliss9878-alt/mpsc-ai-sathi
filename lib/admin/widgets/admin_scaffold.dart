@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:mpsc_combine_ai/theme/app_colors.dart';
+import 'package:mpsc_combine_ai/widgets/app_brand_logo.dart';
 
 /// Consistent AppBar + FAB scaffold shared by every Admin Panel screen.
 class AdminScaffold extends StatelessWidget {
@@ -21,7 +22,20 @@ class AdminScaffold extends StatelessWidget {
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
-        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+        title: Row(
+          children: [
+            const AppBrandLogo(size: 32, borderRadius: 8),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                title,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
         actions: actions,
       ),
       body: SafeArea(
@@ -67,7 +81,20 @@ class AdminFormScaffold extends StatelessWidget {
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
-        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+        title: Row(
+          children: [
+            const AppBrandLogo(size: 32, borderRadius: 8),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                title,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
       ),
       body: SafeArea(
         child: Center(

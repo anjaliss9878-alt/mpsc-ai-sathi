@@ -1,5 +1,6 @@
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mpsc_combine_ai/admin/notes/admin_subjects_screen.dart';
 import 'package:mpsc_combine_ai/models/chapter_item.dart';
 import 'package:mpsc_combine_ai/models/content_index.dart';
 import 'package:mpsc_combine_ai/models/exam_item.dart';
@@ -65,8 +66,11 @@ void main() {
     final subjects = await firestore.collection('subjects').get();
     final chapters = await firestore.collection('chapters').get();
     final topicsCol = await firestore.collection('topics').get();
-    expect(subjects.docs, hasLength(1));
-    expect(chapters.docs, hasLength(2));
+    expect(subjects.docs, hasLength(5));
+    final subjectChapters = chapters.docs
+        .where((d) => d.data()['subjectId'] == subjectId)
+        .toList();
+    expect(subjectChapters, hasLength(2));
     expect(topicsCol.docs, isEmpty, reason: 'Do not create a parallel topics collection');
 
     final roots = await repo.watchRootChapters(subjectId).first;
@@ -266,5 +270,53 @@ void main() {
 
     final student = await repo.watchPublishedNotes().first;
     expect(student.map((n) => n.id), isNot(contains(noteId)));
+  });
+
+  test('Admin Content Index defaults to Group B Combined, not legacy Combine',
+      () {
+    expect(kAdminContentIndexDefaultExamId, kGroupBCombinedExamId);
+    expect(kAdminContentIndexDefaultExamId, isNot(kDefaultExamId));
+    final choices = adminContentIndexExamChoices(const <ExamItem>[]);
+    expect(choices.first.id, kGroupBCombinedExamId);
+    expect(choices.map((e) => e.id), contains(kDefaultExamId));
+
+    const groupB = SubjectItem(
+      id: kGroupBSubjectPrelimsGatId,
+      title: 'GAT',
+      subtitle: '',
+      iconName: 'psychology',
+      order: 0,
+      examId: kGroupBCombinedExamId,
+    );
+    const legacy = SubjectItem(
+      id: 'rajyashastra',
+      title: 'Polity',
+      subtitle: '',
+      iconName: 'account_balance',
+      order: 0,
+      examId: kDefaultExamId,
+    );
+    expect(
+      adminContentIndexShowsSubject(groupB, kGroupBCombinedExamId),
+      isTrue,
+    );
+    expect(
+      adminContentIndexShowsSubject(legacy, kGroupBCombinedExamId),
+      isFalse,
+    );
+    expect(adminContentIndexShowsSubject(legacy, kDefaultExamId), isTrue);
+    expect(
+      adminContentIndexShowsSubject(groupB, kDefaultExamId),
+      isFalse,
+    );
+  });
+
+  test('ensureDefaultExam does not delete legacy mpsc_combine', () async {
+    await repo.ensureDefaultExam();
+    final combine = await firestore.collection('exams').doc(kDefaultExamId).get();
+    final groupB =
+        await firestore.collection('exams').doc(kGroupBCombinedExamId).get();
+    expect(combine.exists, isTrue);
+    expect(groupB.exists, isTrue);
   });
 }

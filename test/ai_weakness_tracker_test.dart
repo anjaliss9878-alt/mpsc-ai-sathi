@@ -1,14 +1,26 @@
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mpsc_combine_ai/data/diagnostic_questions.dart';
+import 'package:mpsc_combine_ai/data/student_onboarding.dart';
 import 'package:mpsc_combine_ai/models/chapter_item.dart';
+import 'package:mpsc_combine_ai/models/student_profile.dart';
 import 'package:mpsc_combine_ai/models/subject_item.dart';
 import 'package:mpsc_combine_ai/models/test_result.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/lesson_progress_repository.dart';
 import 'package:mpsc_combine_ai/services/ai_weakness_tracker.dart';
+import 'package:mpsc_combine_ai/services/daily_planner_service.dart';
+import 'package:mpsc_combine_ai/services/diagnostic_service.dart';
 import 'package:mpsc_combine_ai/services/notes_repository.dart';
 import 'package:mpsc_combine_ai/services/profile_repository.dart';
 import 'package:mpsc_combine_ai/services/student_progress_repository.dart';
 import 'package:mpsc_combine_ai/services/syllabus_progress_tracker.dart';
+
+class _FixedSyllabus extends SyllabusProgressTracker {
+  _FixedSyllabus(this.snapshot);
+  final SyllabusProgressSnapshot snapshot;
+  @override
+  Future<SyllabusProgressSnapshot> load(String uid) async => snapshot;
+}
 
 SyllabusTopicProgress _topic({
   required String subjectId,
@@ -107,12 +119,11 @@ void main() {
 
   test('classification uses configurable thresholds', () {
     const t = WeaknessThresholds.defaults;
-    expect(t.bandFor(80), WeaknessBand.strong);
-    expect(t.bandFor(79), WeaknessBand.improving);
-    expect(t.bandFor(60), WeaknessBand.improving);
-    expect(t.bandFor(59), WeaknessBand.weak);
-    expect(t.bandFor(40), WeaknessBand.weak);
-    expect(t.bandFor(39), WeaknessBand.critical);
+    expect(t.bandFor(70), WeaknessBand.strong);
+    expect(t.bandFor(69), WeaknessBand.improving);
+    expect(t.bandFor(50), WeaknessBand.improving);
+    expect(t.bandFor(49), WeaknessBand.weak);
+    expect(t.bandFor(0), WeaknessBand.weak);
 
     const custom = WeaknessThresholds(strongMin: 90, improvingMin: 70, weakMin: 50);
     expect(custom.bandFor(85), WeaknessBand.improving);
@@ -138,7 +149,7 @@ void main() {
     );
     final rights = result.topics.firstWhere((t) => t.chapterId == 'rights');
     expect(rights.accuracyPercent, 20);
-    expect(rights.band, WeaknessBand.critical);
+    expect(rights.band, WeaknessBand.weak);
     expect(rights.attempted, 10);
     expect(rights.correct, 2);
     expect(rights.wrong, 8);
@@ -147,7 +158,7 @@ void main() {
     expect(polity.attempted, 20);
     expect(polity.correct, 10);
     expect(polity.accuracyPercent, 50);
-    expect(polity.band, WeaknessBand.weak);
+    expect(polity.band, WeaknessBand.improving);
   });
 
   test('trend improving / declining / insufficient', () {
@@ -247,7 +258,7 @@ void main() {
     expect(rights.repeatedMistakes, isTrue);
     expect(rights.examImportant, isTrue);
     expect(rights.priority, greaterThan(40));
-    expect(rights.band, WeaknessBand.critical);
+    expect(rights.band, WeaknessBand.weak);
     expect(result.weakCompleted.any((t) => t.chapterId == 'rights'), isTrue);
   });
 
@@ -433,5 +444,213 @@ void main() {
     expect(snap.signals.single.source, 'mcq');
     expect(snap.signals.single.scorePercent, 40);
     expect(snap.weakTopics, isNotEmpty);
+  });
+
+  test('0% with real attempts is Weak, unattempted topics are omitted', () {
+    final result = analyzeWeakness(
+      WeaknessAnalysisInput(
+        now: now,
+        syllabus: _syllabus(),
+        samples: [
+          _sample(at: now, correct: 0, attempted: 4, chapterId: 'rights'),
+        ],
+      ),
+    );
+    expect(result.topics.single.chapterId, 'rights');
+    expect(result.topics.single.accuracyPercent, 0);
+    expect(result.topics.single.band, WeaknessBand.weak);
+    expect(result.topics.any((t) => t.chapterId == 'earth'), isFalse);
+    expect(result.topics.any((t) => t.band == WeaknessBand.insufficient), isFalse);
+  });
+
+  test('PYQ without chapter metadata is not guessed onto a topic', () {
+    final result = analyzeWeakness(
+      WeaknessAnalysisInput(
+        now: now,
+        syllabus: _syllabus(),
+        samples: [
+          PerformanceSample(
+            at: now,
+            attempted: 1,
+            correct: 1,
+            wrong: 0,
+            source: 'pyq',
+            label: 'MPSC 2019 Paper',
+            subjectId: '',
+            chapterId: '',
+            subjectTitle: '',
+          ),
+        ],
+      ),
+    );
+    expect(result.hasPerformance, isTrue);
+    expect(result.topics, isEmpty);
+  });
+
+  test('diagnostic area stays Economy; later MCQ updates latest band and planner',
+      () async {
+    final db = FakeFirebaseFirestore();
+    final progress = StudentProgressRepository(firestore: db);
+    final diagnostic = DiagnosticService(progress: progress);
+    final questions = groupBDiagnosticQuestions();
+    final selected = List<int?>.generate(questions.length, (i) {
+      if (questions[i].areaId == 'economy') {
+        return (questions[i].correctIndex + 1) % questions[i].options.length;
+      }
+      return questions[i].correctIndex;
+    });
+    final scored = diagnostic.score(
+      attemptId: 'diag_eco',
+      targetExam: kTargetExamGroupBCombined,
+      questions: questions,
+      selected: selected,
+      now: DateTime(2026, 9, 1, 10),
+    );
+    await diagnostic.persist('student_w', scored);
+
+    final profiles = ProfileRepository(firestore: db);
+    await profiles.saveProfile(
+      StudentProfile(
+        uid: 'student_w',
+        name: 'Asha',
+        email: 'a@x.com',
+        mobile: '9999999999',
+        targetExam: kTargetExamGroupBCombined,
+        dailyStudyHours: 5,
+        onboardingCompleted: true,
+        diagnosticCompleted: true,
+      ),
+    );
+
+    final syllabus = groupBFallbackSyllabus();
+    final tracker = FirestoreAiWeaknessTracker(
+      progress: progress,
+      classroom: LessonProgressRepository(firestore: db),
+      syllabus: _FixedSyllabus(syllabus),
+      profiles: profiles,
+    );
+
+    final afterDiag = await tracker.load(
+      'student_w',
+      syllabus: syllabus,
+      now: DateTime(2026, 9, 1, 11),
+    );
+    final economyTopics = afterDiag.signals
+        .where((s) => s.subjectTitle == 'Economy' || s.chapterId.contains('economy'))
+        .toList();
+    expect(economyTopics, isNotEmpty);
+    expect(
+      afterDiag.signals.any((s) => s.subjectTitle == 'General Ability Test'),
+      isFalse,
+    );
+    expect(economyTopics.first.isWeak, isTrue);
+
+    final economyChapter = groupBChapterForArea('economy')!;
+    await progress.saveTestAttempt(
+      'student_w',
+      TestResult(
+        testTitle: 'Basics of Indian Economy MCQ',
+        dateTime: DateTime(2026, 9, 2, 12),
+        totalQuestions: 10,
+        attempted: 10,
+        correct: 3,
+        wrong: 7,
+        score: 3,
+        maxScore: 10,
+        percentage: 30,
+        timeTakenSeconds: 60,
+        questionResults: const [],
+      ),
+      kind: 'mcq',
+      subjectId: economyChapter.subjectId,
+      chapterId: economyChapter.id,
+      areaId: 'economy',
+    );
+
+    final afterLow = await tracker.load(
+      'student_w',
+      syllabus: syllabus,
+      now: DateTime(2026, 9, 2, 13),
+    );
+    final low = afterLow.signals.singleWhere(
+      (s) => s.chapterId == economyChapter.id,
+    );
+    expect(low.scorePercent, 30);
+    expect(low.isWeak, isTrue);
+    expect(low.priority, greaterThan(0));
+
+    final lowPlan = DailyPlannerService().buildPlan(
+      uid: 'student_w',
+      prefs: const PlannerPrefs(
+        targetExam: kTargetExamGroupBCombined,
+        examDate: '',
+        dailyHours: 5,
+        preparationDurationDays: 90,
+      ),
+      dateKey: '2026-09-02',
+      syllabus: syllabus,
+      weakness: afterLow,
+      now: DateTime(2026, 9, 2, 13),
+    );
+    expect(lowPlan.adaptationNotes.join(' '), contains('Weak: Economy'));
+
+    await progress.saveTestAttempt(
+      'student_w',
+      TestResult(
+        testTitle: 'Basics of Indian Economy MCQ 2',
+        dateTime: DateTime(2026, 9, 3, 12),
+        totalQuestions: 10,
+        attempted: 10,
+        correct: 9,
+        wrong: 1,
+        score: 9,
+        maxScore: 10,
+        percentage: 90,
+        timeTakenSeconds: 50,
+        questionResults: const [],
+      ),
+      kind: 'mcq',
+      subjectId: economyChapter.subjectId,
+      chapterId: economyChapter.id,
+      areaId: 'economy',
+    );
+
+    final afterHigh = await tracker.load(
+      'student_w',
+      syllabus: syllabus,
+      now: DateTime(2026, 9, 3, 13),
+    );
+    final high = afterHigh.signals.singleWhere(
+      (s) => s.chapterId == economyChapter.id,
+    );
+    expect(high.scorePercent, 90);
+    expect(high.isStrong, isTrue);
+    expect(high.isWeak, isFalse);
+
+    final highPlan = DailyPlannerService().buildPlan(
+      uid: 'student_w',
+      prefs: const PlannerPrefs(
+        targetExam: kTargetExamGroupBCombined,
+        examDate: '',
+        dailyHours: 5,
+        preparationDurationDays: 90,
+      ),
+      dateKey: '2026-09-03',
+      syllabus: syllabus,
+      weakness: afterHigh,
+      now: DateTime(2026, 9, 3, 13),
+    );
+    expect(highPlan.adaptationNotes.join(' '), isNot(contains('Weak: Economy')));
+    expect(
+      highPlan.tasks.any(
+        (t) =>
+            t.subject == 'History' ||
+            t.subject == 'Marathi' ||
+            t.subject == 'Current Affairs' ||
+            t.subject == 'Geography' ||
+            t.subject == 'Polity',
+      ),
+      isTrue,
+    );
   });
 }

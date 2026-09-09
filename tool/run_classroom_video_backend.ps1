@@ -18,8 +18,12 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $repoRoot
 
-$flutterRoot = 'D:\flutter\flutter'
+$flutterRoot = 'D:\Flutter\flutter'
 $dartBat = Join-Path $flutterRoot 'bin\dart.bat'
+if (-not (Test-Path $dartBat)) {
+  $flutterRoot = 'D:\flutter\flutter'
+  $dartBat = Join-Path $flutterRoot 'bin\dart.bat'
+}
 if (-not (Test-Path $dartBat)) {
   $flutterCmd = Get-Command flutter -ErrorAction SilentlyContinue
   if ($flutterCmd) {
@@ -46,6 +50,24 @@ foreach ($path in @($dartAot, $frontend, $sdkRoot, $tester, $icu, $packages, $en
 if (-not (Test-Path $DefinesFile)) {
   Write-Error "Missing $DefinesFile - copy dart_defines.json.example and fill keys."
 }
+
+# Worker-only: expose Gemini via process env. Never print the value. Never
+# dart-define it into Flutter/Admin.
+if ([string]::IsNullOrWhiteSpace($env:AI_API_KEY) -and (Test-Path $DefinesFile)) {
+  try {
+    $definesJson = Get-Content -Raw -Path $DefinesFile | ConvertFrom-Json
+    $fromFile = [string]$definesJson.AI_API_KEY
+    if (-not [string]::IsNullOrWhiteSpace($fromFile)) {
+      $env:AI_API_KEY = $fromFile.Trim()
+    }
+  } catch {
+    Write-Warning "Could not read AI_API_KEY from $DefinesFile"
+  }
+}
+if ([string]::IsNullOrWhiteSpace($env:AI_API_KEY)) {
+  Write-Error "Missing AI_API_KEY. Set it in the process environment, or in dart_defines.json for this worker."
+}
+Write-Host "Gemini: AI_API_KEY is set for the local worker (not logged)."
 
 $ffmpeg = Join-Path $repoRoot '.tools\ffmpeg\ffmpeg.exe'
 if (-not (Test-Path $ffmpeg)) {

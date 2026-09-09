@@ -1,53 +1,36 @@
 import 'dart:convert';
 import 'dart:io';
 
-/// Local smoke: ElevenLabs TTS (short script) → FFmpeg slides+audio → ffprobe.
+/// Local smoke: Gemini `/ai/tts` (classroom worker) → FFmpeg slides+audio → ffprobe.
 ///
-/// Usage (repo root, worker optional for /ai/tts; this talks to ElevenLabs via
-/// dart_defines.json and local FFmpeg):
+/// Usage (repo root; start the classroom worker first):
 ///   dart run tool/video_audio_pipeline_smoke.dart
 Future<void> main() async {
-  final defines = jsonDecode(File('dart_defines.json').readAsStringSync());
-  final map = defines is Map ? Map<String, dynamic>.from(defines) : <String, dynamic>{};
-  final key = '${map['ELEVENLABS_API_KEY'] ?? ''}'.trim();
-  if (key.isEmpty) {
-    stderr.writeln('FAIL: ELEVENLABS_API_KEY missing in dart_defines.json');
-    exit(1);
-  }
-  final voice = '${map['ELEVENLABS_VOICE_ID'] ?? 'pNInz6obpgDQGcFmaJgB'}'.trim();
-  final model =
-      '${map['ELEVENLABS_MODEL_ID'] ?? map['ELEVENLABS_MODEL'] ?? 'eleven_multilingual_v2'}'
-          .trim();
   const script =
       'नमस्कार विद्यार्थ्यांनो. आज आपण भारतीय राज्यघटनेतील मूलभूत अधिकारांचा अभ्यास करणार आहोत.';
 
-  stdout.writeln('POST ElevenLabs TTS chars=${script.length} voice=$voice');
-  final uri = Uri.parse(
-    'https://api.elevenlabs.io/v1/text-to-speech/$voice/with-timestamps',
-  );
+  stdout.writeln('POST /ai/tts chars=${script.length}');
+  final uri = Uri.parse('http://127.0.0.1:8791/ai/tts');
   final client = HttpClient();
   final req = await client.postUrl(uri);
   req.headers.contentType = ContentType.json;
-  req.headers.set('xi-api-key', key);
-  req.headers.set('Accept', 'application/json');
-  req.add(utf8.encode(jsonEncode({
-    'text': script,
-    'model_id': model,
-  })));
-  final res = await req.close().timeout(const Duration(seconds: 120));
+  req.add(utf8.encode(jsonEncode({'text': script, 'subject': 'polity'})));
+  final res = await req.close().timeout(const Duration(seconds: 180));
   final body = await utf8.decodeStream(res);
   if (res.statusCode < 200 || res.statusCode >= 300) {
-    stderr.writeln('FAIL: ElevenLabs HTTP ${res.statusCode} ${body.substring(0, body.length.clamp(0, 200))}');
+    stderr.writeln(
+      'FAIL: /ai/tts HTTP ${res.statusCode} ${body.substring(0, body.length.clamp(0, 200))}',
+    );
     exit(1);
   }
   final decoded = jsonDecode(body) as Map<String, dynamic>;
   final b64 = '${decoded['audio_base64'] ?? ''}'.trim();
   if (b64.isEmpty) {
-    stderr.writeln('FAIL: ElevenLabs returned empty audio');
+    stderr.writeln('FAIL: Gemini TTS returned empty audio');
     exit(1);
   }
   final audioBytes = base64Decode(b64);
-  stdout.writeln('TTS bytes=${audioBytes.length}');
+  stdout.writeln('TTS bytes=${audioBytes.length} mime=${decoded['mimeType']}');
   if (audioBytes.length < 800) {
     stderr.writeln('FAIL: audio too short');
     exit(1);
@@ -61,7 +44,7 @@ Future<void> main() async {
   }
 
   final work = await Directory.systemTemp.createTemp('mpsc_av_smoke_');
-  final audioFile = File('${work.path}${Platform.pathSeparator}audio.mp3');
+  final audioFile = File('${work.path}${Platform.pathSeparator}audio.wav');
   await audioFile.writeAsBytes(audioBytes, flush: true);
 
   for (var i = 0; i < 2; i++) {
@@ -85,8 +68,14 @@ Future<void> main() async {
   }
 
   final list = File('${work.path}${Platform.pathSeparator}list.txt');
-  final s0 = File('${work.path}${Platform.pathSeparator}slide_0.png').absolute.path.replaceAll(r'\', '/');
-  final s1 = File('${work.path}${Platform.pathSeparator}slide_1.png').absolute.path.replaceAll(r'\', '/');
+  final s0 = File('${work.path}${Platform.pathSeparator}slide_0.png')
+      .absolute
+      .path
+      .replaceAll(r'\', '/');
+  final s1 = File('${work.path}${Platform.pathSeparator}slide_1.png')
+      .absolute
+      .path
+      .replaceAll(r'\', '/');
   await list.writeAsString(
     "file '$s0'\nduration 3\nfile '$s1'\nduration 3\nfile '$s1'\n",
   );

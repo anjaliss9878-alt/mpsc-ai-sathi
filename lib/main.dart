@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:mpsc_combine_ai/models/exam_item.dart';
 import 'package:mpsc_combine_ai/models/student_profile.dart';
 import 'package:mpsc_combine_ai/models/continue_session.dart';
 import 'package:mpsc_combine_ai/models/study_goal.dart';
@@ -29,7 +32,9 @@ import 'package:mpsc_combine_ai/services/notes_repository.dart';
 import 'package:mpsc_combine_ai/services/notification_repository.dart';
 import 'package:mpsc_combine_ai/services/profile_repository.dart';
 import 'package:mpsc_combine_ai/services/student_progress_repository.dart';
+import 'package:mpsc_combine_ai/theme/app_brand.dart';
 import 'package:mpsc_combine_ai/theme/app_colors.dart';
+import 'package:mpsc_combine_ai/widgets/app_brand_logo.dart';
 import 'package:mpsc_combine_ai/widgets/firebase_initializer.dart';
 
 void main() {
@@ -86,7 +91,7 @@ class MpscCombineApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'MPSC COMBINE AI',
+      title: kAppName,
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
@@ -247,6 +252,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _loadProfile() async {
+    unawaited(notesRepository.ensureDefaultExam());
     final uid = authService.currentUser?.uid;
     if (uid == null) {
       if (mounted) setState(() => _isLoadingProfile = false);
@@ -692,7 +698,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: SizedBox(
                   height: 112,
                   child: StreamBuilder<List<SubjectItem>>(
-                    stream: notesRepository.watchPublishedSubjects(),
+                    stream: notesRepository.watchPublishedSubjects(
+                      examId: kGroupBCombinedExamId,
+                    ),
                     builder: (context, snapshot) {
                       if (snapshot.hasError) {
                         return Padding(
@@ -860,25 +868,14 @@ class _HomeHeader extends StatelessWidget {
           children: [
             Row(
               children: [
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: const Icon(
-                    Icons.school_rounded,
-                    color: AppColors.sky,
-                    size: 28,
-                  ),
-                ),
+                const AppBrandLogo(size: 48, borderRadius: 12),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'MPSC COMBINE AI',
+                        kAppName,
                         style: Theme.of(context).textTheme.titleLarge?.copyWith(
                               color: Colors.white,
                               fontWeight: FontWeight.w800,
@@ -888,7 +885,7 @@ class _HomeHeader extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                       ),
                       Text(
-                        'AI-first MPSC Learning Platform',
+                        kAppTagline,
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                               color: Colors.white.withValues(alpha: 0.85),
                             ),
@@ -899,28 +896,6 @@ class _HomeHeader extends StatelessWidget {
                   ),
                 ),
                 const _NotificationsBellButton(),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Icon(
-                  Icons.location_on_outlined,
-                  size: 14,
-                  color: Colors.white.withValues(alpha: 0.7),
-                ),
-                const SizedBox(width: 4),
-                Flexible(
-                  child: Text(
-                    'MIT Pune Startup Presentation',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Colors.white.withValues(alpha: 0.82),
-                          fontWeight: FontWeight.w500,
-                        ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
               ],
             ),
           ],

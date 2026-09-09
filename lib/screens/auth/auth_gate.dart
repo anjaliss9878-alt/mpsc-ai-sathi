@@ -2,6 +2,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:mpsc_combine_ai/models/student_profile.dart';
 import 'package:mpsc_combine_ai/screens/auth/login_screen.dart';
+import 'package:mpsc_combine_ai/screens/onboarding/diagnostic_flow_screen.dart';
+import 'package:mpsc_combine_ai/screens/onboarding/student_onboarding_screen.dart';
 import 'package:mpsc_combine_ai/services/auth_service.dart';
 import 'package:mpsc_combine_ai/services/profile_repository.dart';
 import 'package:mpsc_combine_ai/theme/app_colors.dart';
@@ -15,9 +17,8 @@ import 'package:mpsc_combine_ai/theme/app_colors.dart';
 ///
 /// Also watches the student's own profile in real time so that an admin
 /// blocking the account (Student Management -> Block) takes effect
-/// immediately, even for a session that is already open. [loggedInChild] is
-/// shown optimistically while that first profile snapshot is still loading,
-/// so normal sign-in is exactly as instant as before this check existed.
+/// immediately, even for a session that is already open. New students are
+/// sent through onboarding and the diagnostic test before Home.
 class AuthGate extends StatelessWidget {
   const AuthGate({super.key, required this.loggedInChild});
 
@@ -58,8 +59,27 @@ class _BlockedStudentGate extends StatelessWidget {
       stream: profileRepository.watchProfile(uid),
       builder: (context, snapshot) {
         final profile = snapshot.data;
+        if (snapshot.connectionState == ConnectionState.waiting &&
+            !snapshot.hasData &&
+            !snapshot.hasError) {
+          return const Scaffold(
+            backgroundColor: AppColors.background,
+            body: Center(
+              child: CircularProgressIndicator(color: AppColors.orange),
+            ),
+          );
+        }
         if (profile != null && profile.isBlocked) {
           return const _BlockedScaffold();
+        }
+        if (snapshot.hasError) {
+          return child;
+        }
+        if (profile == null || profile.needsOnboarding) {
+          return StudentOnboardingScreen(existing: profile);
+        }
+        if (profile.needsDiagnostic) {
+          return DiagnosticFlowScreen(profile: profile);
         }
         return child;
       },

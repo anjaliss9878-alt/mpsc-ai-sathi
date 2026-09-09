@@ -51,6 +51,40 @@ void main() {
     expect(round.mcqs.first.correctIndex, inInclusiveRange(0, 3));
   });
 
+  test('worker /ai/lesson envelope parses into slides with narration', () {
+    final lesson = GeneratedLesson.fromMap({
+      'topicName': 'गंगा नदी',
+      'question': 'गंगा नदी',
+      'script': ['गंगा ही भारतातील प्रमुख नदी आहे.', 'दुसरा परिच्छेद.'],
+      'summary': 'गंगा नदी',
+      'slides': [
+        for (var i = 0; i < 5; i++)
+          {
+            'title': 'स्लाइड ${i + 1}',
+            'bullets': ['मुद्दा'],
+            'sceneType': i == 0
+                ? 'introduction'
+                : (i == 4 ? 'summary' : 'mainExplanation'),
+            'narration': 'स्पष्टीकरण ${i + 1}',
+          },
+      ],
+      'mcqs': [
+        {
+          'question': 'प्रश्न',
+          'options': ['अ', 'ब', 'क', 'ड'],
+          'correctIndex': 0,
+        },
+      ],
+      'pyqs': [],
+    }, '');
+    expect(lesson.script, isNotEmpty);
+    expect(lesson.slides.length, 5);
+    for (var i = 0; i < lesson.slides.length; i++) {
+      expect(lesson.slides[i].narration, isNotEmpty);
+    }
+    expect(isPlaceholderLesson(lesson, topic: 'गंगा नदी'), isFalse);
+  });
+
   test('premium parse tolerates missing and partial maps', () {
     final empty = LessonPremiumExtras.fromMap(null);
     expect(empty.hasContent, isFalse);

@@ -6,13 +6,27 @@
  * - Same origin as the function Host (Student web on Netlify)
  * - URL / DEPLOY_PRIME_URL (Netlify site / deploy preview)
  * - Firebase Hosting defaults for project mpsc-3f4ef
+ * - Production Student origin
+ * - Production Admin Panel (https://mpsc-ai-admin.netlify.app)
+ * - Local Flutter Admin debug origins (8080/8081)
  * - CORS_ALLOWED_ORIGINS (comma-separated extra Student/Admin origins)
- * - localhost / 127.0.0.1 only when CONTEXT is not production
+ *
+ * Local Admin may call production `/rag/*`. Those routes stay auth-gated
+ * (extract is admin-only).
  */
 
 const DEFAULT_ORIGINS = [
   'https://mpsc-3f4ef.web.app',
   'https://mpsc-3f4ef.firebaseapp.com',
+  'https://mpscaisathi.co.in',
+  'https://mpsc-ai-admin.netlify.app',
+];
+
+const ADMIN_DEBUG_ORIGINS = [
+  'http://localhost:8081',
+  'http://localhost:8080',
+  'http://127.0.0.1:8081',
+  'http://127.0.0.1:8080',
 ];
 
 function header(event, name) {
@@ -38,24 +52,33 @@ function configuredOrigins() {
   const preview = `${process.env.DEPLOY_PRIME_URL || ''}`
     .trim()
     .replace(/\/$/, '');
-  return [...new Set([...DEFAULT_ORIGINS, site, preview, ...extra].filter(Boolean))];
+  return [
+    ...new Set(
+      [...DEFAULT_ORIGINS, ...ADMIN_DEBUG_ORIGINS, site, preview, ...extra].filter(
+        Boolean,
+      ),
+    ),
+  ];
 }
 
 function isLocalDevOrigin(origin) {
+  const o = `${origin || ''}`.trim().replace(/\/$/, '');
+  if (ADMIN_DEBUG_ORIGINS.includes(o)) return true;
   try {
     const u = new URL(origin);
     const localHost =
       u.hostname === 'localhost' ||
       u.hostname === '127.0.0.1' ||
       u.hostname === '[::1]';
-    return (u.protocol === 'http:' || u.protocol === 'https:') && localHost;
+    const port = u.port === '8080' || u.port === '8081';
+    return u.protocol === 'http:' && localHost && port;
   } catch (_) {
     return false;
   }
 }
 
 function allowLocalCors() {
-  return `${process.env.CONTEXT || ''}`.toLowerCase() !== 'production';
+  return true;
 }
 
 function isSameOrigin(event, origin) {
@@ -75,7 +98,7 @@ function isOriginAllowed(origin, event) {
   if (!o) return false;
   if (isSameOrigin(event, o)) return true;
   if (configuredOrigins().includes(o)) return true;
-  if (allowLocalCors() && isLocalDevOrigin(o)) return true;
+  if (isLocalDevOrigin(o)) return true;
   return false;
 }
 
@@ -107,6 +130,7 @@ function optionsResponse(event = {}) {
 
 module.exports = {
   DEFAULT_ORIGINS,
+  ADMIN_DEBUG_ORIGINS,
   configuredOrigins,
   requestOrigin,
   isOriginAllowed,

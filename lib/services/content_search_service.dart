@@ -1,4 +1,5 @@
 import 'package:mpsc_combine_ai/models/chapter_item.dart';
+import 'package:mpsc_combine_ai/models/exam_item.dart';
 import 'package:mpsc_combine_ai/models/mcq_item.dart';
 import 'package:mpsc_combine_ai/models/note_item.dart';
 import 'package:mpsc_combine_ai/models/subject_item.dart';
@@ -54,7 +55,9 @@ class ContentSearchService {
         DateTime.now().difference(_cacheAt!) < const Duration(minutes: 2);
     if (!force && fresh && _subjectsCache != null) return;
 
-    final subjects = (await _notes.watchPublishedSubjects().first);
+    final subjects = (await _notes
+        .watchPublishedSubjects(examId: kGroupBCombinedExamId)
+        .first);
     final chaptersBySubject = <String, List<ChapterItem>>{};
     for (final s in subjects) {
       chaptersBySubject[s.id] = await _notes.watchPublishedChapters(s.id).first;

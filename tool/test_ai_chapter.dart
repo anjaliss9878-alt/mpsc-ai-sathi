@@ -144,7 +144,7 @@ Future<void> main() async {
   }
 
   results['Video'] = 'NOT TESTED YET';
-  results['ElevenLabs'] = 'NOT TESTED YET';
+  results['Gemini TTS'] = 'server /ai/tts';
   _printReport(results);
   client.close();
 }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:mpsc_combine_ai/admin/admin_dashboard_screen.dart';
 import 'package:mpsc_combine_ai/admin/auth/admin_auth_gate.dart';
+import 'package:mpsc_combine_ai/theme/app_brand.dart';
 import 'package:mpsc_combine_ai/theme/app_colors.dart';
 import 'package:mpsc_combine_ai/widgets/firebase_initializer.dart';
 
@@ -13,7 +14,7 @@ class AdminApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'MPSC COMBINE AI — Admin',
+      title: kAppAdminTitle,
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,

@@ -31,6 +31,7 @@ class AdminRagSourcesScreen extends StatefulWidget {
 class _AdminRagSourcesScreenState extends State<AdminRagSourcesScreen> {
   final _consoleKey = GlobalKey();
   final Set<String> _busy = {};
+  final Set<String> _resumed = {};
   String? _subjectId;
   String? _chapterId;
   String? _topicId;
@@ -49,21 +50,31 @@ class _AdminRagSourcesScreenState extends State<AdminRagSourcesScreen> {
   }
 
   Future<void> _index(RagSource source, {required bool force}) async {
+    if (_busy.contains(source.id)) return;
     final issues = ragIndexMetadataIssues(source);
     if (issues.isNotEmpty) {
       showAdminMessage(context, issues.first.message);
       return;
     }
+    if (!ragProcessingService.enqueueProcessSource(
+      source.id,
+      force: force,
+    )) {
+      showAdminMessage(context, 'Indexing is already in progress.');
+      return;
+    }
     setState(() => _busy.add(source.id));
     try {
-      await ragProcessingService.processSource(source.id, force: force);
       await auditLogRepository.log(
         action: force ? 'reindex' : 'index',
         module: 'RAG Management',
         targetLabel: source.title,
       );
       if (!mounted) return;
-      showAdminMessage(context, force ? 'Re-index finished.' : 'Indexing finished.');
+      showAdminMessage(
+        context,
+        force ? 'Re-index in progress' : 'Indexing in progress',
+      );
     } catch (e) {
       if (mounted) showAdminError(context, RagException.fromError(e));
     } finally {
@@ -72,6 +83,18 @@ class _AdminRagSourcesScreenState extends State<AdminRagSourcesScreen> {
   }
 
   Future<void> _retry(RagSource source) => _index(source, force: true);
+
+  void _resumeInterruptedIndexing(List<RagSource> items) {
+    for (final source in items) {
+      if (source.status != RagSourceStatus.processing) {
+        _resumed.remove(source.id);
+        continue;
+      }
+      if (ragProcessingService.isProcessInFlight(source.id)) continue;
+      if (!_resumed.add(source.id)) continue;
+      ragProcessingService.enqueueProcessSource(source.id, force: true);
+    }
+  }
 
   Future<void> _togglePublished(RagSource source, bool published) async {
     setState(() => _busy.add(source.id));
@@ -218,6 +241,8 @@ class _AdminRagSourcesScreenState extends State<AdminRagSourcesScreen> {
   String _subtitle(RagSource item) {
     final management = ragManagementStatus(item);
     final indexedAt = ragLastIndexedAt(item);
+    final inFlight = ragProcessingService.isProcessInFlight(item.id);
+    final hint = ragIndexingHint(item, inFlight: inFlight);
     return [
       item.exam.isNotEmpty ? item.exam : item.examId,
       if (item.subject.isNotEmpty) item.subject,
@@ -232,6 +257,7 @@ class _AdminRagSourcesScreenState extends State<AdminRagSourcesScreen> {
       '${item.chunkCount} chunks',
       ragEmbeddingStatusLabel(ragEmbeddingStatus(item)),
       if (indexedAt != null) formatFriendlyDateTime(indexedAt),
+      if (hint.isNotEmpty) hint,
     ].join(' · ');
   }
 
@@ -257,6 +283,10 @@ class _AdminRagSourcesScreenState extends State<AdminRagSourcesScreen> {
           }
           if (!snapshot.hasData) return const LoadingState();
           final items = snapshot.data!;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            _resumeInterruptedIndexing(items);
+          });
           final stats = ragAdminMonitorStats(items);
           final filtered = items
               .where(
@@ -277,7 +307,8 @@ class _AdminRagSourcesScreenState extends State<AdminRagSourcesScreen> {
             children: [
               const Text(
                 'Upload/Save → validate metadata → extract → clean → chunk → '
-                'embed → index → Ready. Uses the existing RAG pipeline.',
+                'embed → index → Ready. Keep this tab open until Ready. '
+                'If Processing never finishes, tap Retry.',
                 style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
               ),
               const SizedBox(height: 12),
@@ -461,9 +492,16 @@ class _AdminRagSourcesScreenState extends State<AdminRagSourcesScreen> {
                                     borderRadius: BorderRadius.circular(8),
                                   ),
                                   child: Text(
-                                    ragManagementStatusToString(
-                                      ragManagementStatus(item),
-                                    ),
+                                    ragIndexingNeedsRetry(
+                                          item,
+                                          inFlight:
+                                              ragProcessingService
+                                                  .isProcessInFlight(item.id),
+                                        )
+                                        ? 'Stuck — Retry'
+                                        : ragManagementStatusToString(
+                                            ragManagementStatus(item),
+                                          ),
                                     style: TextStyle(
                                       color: _statusColor(
                                         ragManagementStatus(item),
@@ -474,7 +512,8 @@ class _AdminRagSourcesScreenState extends State<AdminRagSourcesScreen> {
                                   ),
                                 ),
                                 const Spacer(),
-                                if (_busy.contains(item.id))
+                                if (_busy.contains(item.id) ||
+                                    ragProcessingService.isProcessInFlight(item.id))
                                   const SizedBox(
                                     width: 18,
                                     height: 18,
@@ -496,16 +535,31 @@ class _AdminRagSourcesScreenState extends State<AdminRagSourcesScreen> {
                               spacing: 4,
                               children: [
                                 TextButton(
-                                  onPressed: () => _index(item, force: false),
+                                  onPressed: _busy.contains(item.id)
+                                      ? null
+                                      : () => _index(item, force: false),
                                   child: const Text('Index'),
                                 ),
                                 TextButton(
-                                  onPressed: () => _index(item, force: true),
+                                  onPressed: _busy.contains(item.id)
+                                      ? null
+                                      : () => _index(item, force: true),
                                   child: const Text('Re-index'),
                                 ),
                                 TextButton(
-                                  onPressed: () => _retry(item),
-                                  child: const Text('Retry'),
+                                  onPressed: _busy.contains(item.id)
+                                      ? null
+                                      : () => _retry(item),
+                                  child: Text(
+                                    item.isFailed ||
+                                            ragIndexingNeedsRetry(
+                                              item,
+                                              inFlight: ragProcessingService
+                                                  .isProcessInFlight(item.id),
+                                            )
+                                        ? 'Processing failed — Retry'
+                                        : 'Retry',
+                                  ),
                                 ),
                                 TextButton(
                                   onPressed: () => _removeFromRag(item),
@@ -540,7 +594,7 @@ class _AdminRagSourcesScreenState extends State<AdminRagSourcesScreen> {
               const SizedBox(height: 16),
               AdminRagTestConsole(
                 key: _consoleKey,
-                initialExamId: _examId ?? kDefaultExamId,
+                initialExamId: _examId ?? kGroupBCombinedExamId,
                 initialSubjectId: _subjectId ?? '',
                 initialChapterId: _chapterId ?? '',
                 initialTopicId: _topicId ?? '',

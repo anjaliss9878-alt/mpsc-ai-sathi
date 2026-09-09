@@ -84,6 +84,7 @@ class MultiRagQuery {
     this.topKPerDomain = 8,
     this.similarityThreshold = 0.05,
     this.hybrid = true,
+    this.onlyPublishedReady = true,
     this.performance = const [],
     this.queryEmbedding,
   });
@@ -102,6 +103,10 @@ class MultiRagQuery {
   final int topKPerDomain;
   final double similarityThreshold;
   final bool hybrid;
+
+  /// Student retrieval stays published+Ready. Admin Search/Test sets false
+  /// so Ready unpublished sources (e.g. just-indexed PDFs) can be tested.
+  final bool onlyPublishedReady;
 
   /// Injected student performance rows (tests + later student wiring).
   final List<StudentPerformanceRecord> performance;

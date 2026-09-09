@@ -8,6 +8,7 @@ const kEnterTopic = 'कृपया विषय लिहा.';
 const kLessonFailed = 'AI धडा तयार करता आला नाही. कृपया पुन्हा प्रयत्न करा.';
 const kAudioUnavailable =
     'AI Teacher चा आवाज तयार करता आला नाही. कृपया पुन्हा प्रयत्न करा.';
+const kVoiceFailed = 'Voice तयार करताना समस्या आली. पुन्हा प्रयत्न करा.';
 const kGenericRetry = 'काहीतरी चुकले. कृपया पुन्हा प्रयत्न करा.';
 
 String studentFacingError(Object error) {
@@ -18,6 +19,12 @@ String studentFacingError(Object error) {
   final lower = raw.toLowerCase();
   if (lower.contains('कृपया विषय') || lower.contains('enter a topic')) {
     return kEnterTopic;
+  }
+  if (lower.contains('voice') ||
+      lower.contains('tts') ||
+      lower.contains('audio') ||
+      lower.contains('आवाज')) {
+    return kVoiceFailed;
   }
   if (lower.contains('localhost') ||
       lower.contains('127.0.0.1') ||

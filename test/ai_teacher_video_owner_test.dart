@@ -7,10 +7,73 @@ import 'package:mpsc_combine_ai/screens/ai_teacher_classroom/widgets/ai_lesson_p
 import 'package:mpsc_combine_ai/screens/ai_teacher_classroom/widgets/classroom_avatar.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/full_lesson_narration.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/generated_lesson.dart';
+import 'package:mpsc_combine_ai/models/ai_lesson.dart';
 import 'package:mpsc_combine_ai/services/classroom_video/classroom_lecture.dart';
 import 'package:mpsc_combine_ai/services/classroom_video/classroom_video_client.dart';
 
 void main() {
+  test('leftover muxed URL while generating is not lecture-ready', () {
+    const job = AiLesson(
+      id: 'job',
+      uid: 'u',
+      topic: 'घटनेची प्रस्तावना',
+      status: AiLessonStatus.generating,
+      audioUrl: 'lessons/a.wav',
+      finalVideoUrl: 'lessons/old.mp4',
+    );
+    expect(job.hasAudio, isTrue);
+    expect(job.hasVideo, isTrue);
+    expect(job.isPlayable, isFalse);
+  });
+
+  test('Flutter web lecture keeps TTS slides; muxed MP4 is native-only', () {
+    expect(
+      lectureMuxedUrlForStudent(
+        isWeb: true,
+        muxedUrl: 'https://example.com/lesson.mp4',
+      ),
+      isNull,
+    );
+    expect(
+      lectureMuxedUrlForStudent(
+        isWeb: false,
+        muxedUrl: 'https://example.com/lesson.mp4',
+      ),
+      'https://example.com/lesson.mp4',
+    );
+    expect(
+      lectureMuxedUrlForStudent(isWeb: true, muxedUrl: '  '),
+      isNull,
+    );
+  });
+
+  test('muxed lecture is prepared for any topic when worker can render', () {
+    expect(
+      shouldPrepareMuxedLecture(
+        engineCanRender: true,
+        signedIn: true,
+        hasAudio: true,
+      ),
+      isTrue,
+    );
+    expect(
+      shouldPrepareMuxedLecture(
+        engineCanRender: false,
+        signedIn: true,
+        hasAudio: true,
+      ),
+      isFalse,
+    );
+    expect(
+      shouldPrepareMuxedLecture(
+        engineCanRender: true,
+        signedIn: false,
+        hasAudio: true,
+      ),
+      isFalse,
+    );
+  });
+
   test('slideSecondsFromSpans follows the shared audio timeline', () {
     const spans = [
       BeatAudioSpan(
@@ -135,6 +198,10 @@ void main() {
         jsonEncode({'ok': true, 'canRender': true, 'ffmpeg': true}),
       ),
       isTrue,
+    );
+    expect(
+      classroomEngineHealthOk(200, jsonEncode({'ok': true})),
+      isFalse,
     );
   });
 

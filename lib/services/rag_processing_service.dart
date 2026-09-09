@@ -1,4 +1,8 @@
+import 'dart:async';
+import 'dart:typed_data';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:mpsc_combine_ai/models/chapter_item.dart';
 import 'package:mpsc_combine_ai/models/content_index.dart';
 import 'package:mpsc_combine_ai/models/current_affair_item.dart';
@@ -11,6 +15,9 @@ import 'package:mpsc_combine_ai/models/rag_source.dart';
 import 'package:mpsc_combine_ai/rag/rag_chunker.dart';
 import 'package:mpsc_combine_ai/rag/rag_domain.dart';
 import 'package:mpsc_combine_ai/rag/rag_exceptions.dart';
+import 'package:mpsc_combine_ai/rag/rag_pdf_extract_pipeline.dart';
+import 'package:mpsc_combine_ai/rag/rag_pdf_page_image.dart';
+import 'package:mpsc_combine_ai/rag/rag_pdf_raster.dart';
 import 'package:mpsc_combine_ai/rag/rag_text.dart';
 import 'package:mpsc_combine_ai/services/current_affairs_repository.dart';
 import 'package:mpsc_combine_ai/services/notes_repository.dart';
@@ -35,6 +42,11 @@ class RagProcessingService {
     StorageService? storage,
     FirebaseFirestore? firestore,
     RagChunker chunker = ragChunker,
+    Future<List<RagPdfPageImage>> Function(
+      Uint8List bytes, {
+      required Set<int> pageNumbers,
+    })? rasterizePdfPages,
+    Duration extractTimeout = kRagExtractTimeout,
   })  : _sources = sources ?? ragSourceRepository,
         _chunks = chunks ?? ragChunkRepository,
         _backend = backend ?? ragBackendClient,
@@ -43,7 +55,9 @@ class RagProcessingService {
         _currentAffairs = currentAffairs ?? currentAffairsRepository,
         _storage = storage ?? storageService,
         _firestore = firestore ?? FirebaseFirestore.instance,
-        _chunker = chunker;
+        _chunker = chunker,
+        _rasterizePdfPages = rasterizePdfPages,
+        _extractTimeout = extractTimeout;
 
   final RagSourceRepository _sources;
   final RagChunkRepository _chunks;
@@ -54,9 +68,88 @@ class RagProcessingService {
   final StorageService _storage;
   final FirebaseFirestore _firestore;
   final RagChunker _chunker;
+  final Future<List<RagPdfPageImage>> Function(
+    Uint8List bytes, {
+    required Set<int> pageNumbers,
+  })? _rasterizePdfPages;
+  final Duration _extractTimeout;
+
+  final Set<String> _inFlight = {};
+
+  bool isProcessInFlight(String sourceId) => _inFlight.contains(sourceId);
+
+  /// Persist metadata, then start extract→chunk→embed without awaiting it.
+  Future<RagSource> saveAndEnqueueProcessing(
+    RagSource draft, {
+    String? inlineText,
+    bool force = false,
+  }) async {
+    final id = draft.id.isEmpty
+        ? await _sources.create(draft)
+        : draft.id;
+    if (draft.id.isNotEmpty) {
+      await _sources.update(draft);
+    }
+    final saved = await _sources.get(id);
+    if (saved == null) {
+      throw RagException.processing('Source not found after save.');
+    }
+    enqueueProcessSource(
+      id,
+      inlineText: inlineText,
+      force: force || draft.id.isNotEmpty,
+    );
+    return saved;
+  }
+
+  /// Starts [processSource] in the background. Returns false if this source
+  /// is already being processed (no duplicate pipeline).
+  bool enqueueProcessSource(
+    String sourceId, {
+    String? inlineText,
+    bool force = false,
+  }) {
+    if (_inFlight.contains(sourceId)) return false;
+    _inFlight.add(sourceId);
+    unawaited(() async {
+      try {
+        await _processSourceBody(
+          sourceId,
+          inlineText: inlineText,
+          force: force,
+        );
+      } catch (_) {
+        // Failure is stored on the source row.
+      } finally {
+        _inFlight.remove(sourceId);
+      }
+    }());
+    return true;
+  }
 
   /// Run (or retry) processing for [sourceId].
   Future<RagSource> processSource(
+    String sourceId, {
+    String? inlineText,
+    bool force = false,
+  }) async {
+    if (_inFlight.contains(sourceId)) {
+      final live = await _sources.get(sourceId);
+      if (live != null) return live;
+    }
+    _inFlight.add(sourceId);
+    try {
+      return await _processSourceBody(
+        sourceId,
+        inlineText: inlineText,
+        force: force,
+      );
+    } finally {
+      _inFlight.remove(sourceId);
+    }
+  }
+
+  Future<RagSource> _processSourceBody(
     String sourceId, {
     String? inlineText,
     bool force = false,
@@ -73,7 +166,16 @@ class RagProcessingService {
     });
 
     try {
-      final pages = await _extractPages(existing, inlineText: inlineText);
+      final pages = await _extractPages(
+        existing,
+        inlineText: inlineText,
+      ).timeout(
+        _extractTimeout,
+        onTimeout: () => throw RagException.pdfExtraction(
+          'PDF extract timed out after ${_timeoutLabel(_extractTimeout)}. '
+          'Keep this Admin tab open and tap Retry. Large scanned PDFs take longer.',
+        ),
+      );
       final cleanedPages = [
         for (final p in pages)
           RagExtractedPage(
@@ -117,6 +219,11 @@ class RagProcessingService {
 
       final embeddings = await _embedAll(
         textChunks.map((c) => c.text).toList(growable: false),
+      ).timeout(
+        _extractTimeout,
+        onTimeout: () => throw RagException.embedding(
+          'Embedding timed out after ${_timeoutLabel(_extractTimeout)}. Tap Retry.',
+        ),
       );
 
       final ragChunks = <RagChunk>[
@@ -135,7 +242,7 @@ class RagProcessingService {
             exam: existing.exam,
             examId: existing.examId.isNotEmpty
                 ? existing.examId
-                : kDefaultExamId,
+                : kGroupBCombinedExamId,
             source: existing.source,
             year: existing.year,
             difficulty: existing.difficulty,
@@ -173,7 +280,7 @@ class RagProcessingService {
         'language': language,
         'ragDomain': ragChunks.first.ragDomain,
         'needsReindex': false,
-        if (existing.examId.isEmpty) 'examId': kDefaultExamId,
+        if (existing.examId.isEmpty) 'examId': kGroupBCombinedExamId,
       });
       final live = (await _sources.get(sourceId)) ?? existing;
       await _restoreStudentChunkVisibility(sourceId, live);
@@ -250,10 +357,7 @@ class RagProcessingService {
         if (source.fileUrl.trim().isEmpty) {
           throw RagException.pdfExtraction('No PDF URL on this source.');
         }
-        return _backend.extractPdf(
-          fileUrl: source.fileUrl,
-          title: source.title,
-        );
+        return _extractPdfPages(source);
       case RagSourceType.text:
         throw RagException.emptyDoc('No text was provided for this source.');
       case RagSourceType.notes:
@@ -268,6 +372,63 @@ class RagProcessingService {
         }
         return [RagExtractedPage(text: text)];
     }
+  }
+
+  Future<List<RagExtractedPage>> _extractPdfPages(RagSource source) async {
+    if (kIsWeb) {
+      return _backend.extractPdf(
+        fileUrl: source.fileUrl,
+        title: source.title,
+      );
+    }
+    List<Map<String, dynamic>> asMaps(List<RagExtractedPage> pages) {
+      return [
+        for (final p in pages)
+          if (p.pageNumber != null)
+            {'page': p.pageNumber, 'text': p.text}
+          else
+            {'text': p.text},
+      ];
+    }
+
+    final result = await extractPdfWithCorruptionFallback(
+      extractFromPdfBytes: () async {
+        final pages = await _backend.extractPdf(
+          fileUrl: source.fileUrl,
+          title: source.title,
+        );
+        return {'pages': asMaps(pages)};
+      },
+      rasterizePages: ({required Set<int> pageNumbers}) async {
+        final bytes = await _storage.downloadBytes(source.fileUrl);
+        final rasterize = _rasterizePdfPages ?? rasterizePdfPagesForRag;
+        return rasterize(bytes, pageNumbers: pageNumbers);
+      },
+      extractFromPageImages: (images) async {
+        final pages = await _backend.extractPdfPageImages(
+          images: images,
+          title: source.title,
+          fileUrl: source.fileUrl,
+        );
+        return {'pages': asMaps(pages)};
+      },
+    );
+    final raw = result['pages'];
+    if (raw is! List) return const [];
+    final out = <RagExtractedPage>[];
+    for (final item in raw) {
+      if (item is! Map) continue;
+      final text = '${item['text'] ?? ''}'.trim();
+      if (text.isEmpty) continue;
+      final page = item['page'];
+      out.add(
+        RagExtractedPage(
+          pageNumber: page is int ? page : null,
+          text: text,
+        ),
+      );
+    }
+    return out;
   }
 
   Future<List<List<double>>> _embedAll(List<String> texts) async {
@@ -394,6 +555,11 @@ class RagProcessingService {
     if (note != null) buf.writeln(_formatNote(note));
     return buf.toString();
   }
+}
+
+String _timeoutLabel(Duration d) {
+  if (d.inMinutes >= 1) return '${d.inMinutes} minutes';
+  return '${d.inSeconds} seconds';
 }
 
 final RagProcessingService ragProcessingService = RagProcessingService();

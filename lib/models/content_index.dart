@@ -38,6 +38,7 @@ String contentNodeTypeToString(ContentNodeType type) {
 /// only (mirrored on the existing `published` bool).
 enum NoteWorkflowStatus {
   draft,
+  aiGenerated,
   underReview,
   approved,
   published,
@@ -51,6 +52,11 @@ NoteWorkflowStatus noteWorkflowStatusFromString(
   switch ((value ?? '').trim().toLowerCase()) {
     case 'draft':
       return NoteWorkflowStatus.draft;
+    case 'aigenerated':
+    case 'ai_generated':
+    case 'ai-generated':
+    case 'ai generated':
+      return NoteWorkflowStatus.aiGenerated;
     case 'underreview':
     case 'under_review':
     case 'under-review':
@@ -73,6 +79,8 @@ String noteWorkflowStatusToString(NoteWorkflowStatus status) {
   switch (status) {
     case NoteWorkflowStatus.draft:
       return 'draft';
+    case NoteWorkflowStatus.aiGenerated:
+      return 'aiGenerated';
     case NoteWorkflowStatus.underReview:
       return 'underReview';
     case NoteWorkflowStatus.approved:
@@ -88,6 +96,8 @@ String noteWorkflowStatusLabel(NoteWorkflowStatus status) {
   switch (status) {
     case NoteWorkflowStatus.draft:
       return 'Draft';
+    case NoteWorkflowStatus.aiGenerated:
+      return 'AI Generated';
     case NoteWorkflowStatus.underReview:
       return 'Under Review';
     case NoteWorkflowStatus.approved:
@@ -127,6 +137,24 @@ bool contentWorkflowIsStudentVisible(ContentWorkflowStatus status) =>
 
 bool contentWorkflowPublishedFlag(ContentWorkflowStatus status) =>
     noteWorkflowPublishedFlag(status);
+
+/// Admin review step: Draft → AI Generated → Under Review → Approved → Published.
+NoteWorkflowStatus contentWorkflowNext(NoteWorkflowStatus status) {
+  switch (status) {
+    case NoteWorkflowStatus.draft:
+      return NoteWorkflowStatus.aiGenerated;
+    case NoteWorkflowStatus.aiGenerated:
+      return NoteWorkflowStatus.underReview;
+    case NoteWorkflowStatus.underReview:
+      return NoteWorkflowStatus.approved;
+    case NoteWorkflowStatus.approved:
+      return NoteWorkflowStatus.published;
+    case NoteWorkflowStatus.published:
+      return NoteWorkflowStatus.published;
+    case NoteWorkflowStatus.unpublished:
+      return NoteWorkflowStatus.underReview;
+  }
+}
 
 /// Group B / Group C / Both. Stored as `targetGroup` (and mirrored as `groupId`).
 enum TargetGroup { groupB, groupC, both }

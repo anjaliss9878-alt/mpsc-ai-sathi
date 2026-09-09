@@ -174,7 +174,12 @@ function matchesFilters(chunk, filters) {
   if (filters.topicId) {
     const tid = `${chunk.topicId || ''}`.trim();
     const cid = `${chunk.chapterId || ''}`.trim();
-    if (tid !== filters.topicId && cid !== filters.topicId) return false;
+    const wantedChapter = `${filters.chapterId || ''}`.trim();
+    if (tid !== filters.topicId && cid !== filters.topicId) {
+      // Chapter-level PDFs omit topicId. Keep them when the chapter matches.
+      if (tid) return false;
+      if (wantedChapter && cid && cid !== wantedChapter) return false;
+    }
   }
   if (Array.isArray(filters.sourceIds) && filters.sourceIds.length) {
     if (!filters.sourceIds.includes(chunk.sourceId)) return false;

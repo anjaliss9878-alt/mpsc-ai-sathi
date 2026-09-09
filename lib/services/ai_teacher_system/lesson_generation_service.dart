@@ -13,6 +13,8 @@ import 'package:mpsc_combine_ai/services/ai_teacher_system/subject_teacher.dart'
 import 'package:mpsc_combine_ai/services/ai_teacher_system/verified_notes_lesson_composer.dart';
 import 'package:mpsc_combine_ai/utils/ai_generation_error.dart';
 import 'package:mpsc_combine_ai/utils/json_list.dart';
+import 'package:mpsc_combine_ai/models/pyq_item.dart';
+import 'package:mpsc_combine_ai/services/pyq_repository.dart';
 
 /// Thrown whenever a full lesson could not be generated.
 class LessonGenerationException implements Exception {
@@ -68,22 +70,23 @@ class GeminiLessonGenerationService implements LessonGenerationService {
     String? apiKey,
     String? model,
     this.useBackend = true,
+    this._backendBases,
   })  : _client = client ?? http.Client(),
-        _apiKey = (apiKey ?? _envKey).trim(),
+        _apiKey = (apiKey ?? '').trim(),
         _model = _resolveModel(model);
 
   final http.Client _client;
   final String _apiKey;
   final String _model;
   final bool useBackend;
+  final List<String>? _backendBases;
 
-  static const String _envKey = String.fromEnvironment('AI_API_KEY');
   static const String _envModel = String.fromEnvironment(
     'AI_MODEL',
     defaultValue: 'gemini-flash-lite-latest',
   );
 
-  String get _workerBase => aiBackendBase();
+  List<String> get _lessonBases => _backendBases ?? lessonBackendBases();
 
   static String _resolveModel(String? model) {
     final m = (model ?? _envModel).trim();
@@ -104,26 +107,39 @@ class GeminiLessonGenerationService implements LessonGenerationService {
       'web': kIsWeb,
     });
 
-    final healthy = useBackend ? await _backendHealthy() : false;
-    if (healthy) {
+    final lessonBase = useBackend ? await _pickHealthyLessonBase() : null;
+    if (lessonBase != null) {
       try {
         final lesson = await _generateViaBackend(
           question: question,
           subjectContext: subjectContext,
           teachingSubject: style,
+          base: lessonBase,
         );
-        return _finishGenerated(lesson, question, style, subjectContext);
+        try {
+          return await _finishGenerated(lesson, question, style, subjectContext);
+        } on LessonGenerationException {
+          rethrow;
+        } catch (e) {
+          debugPrint('[LESSON] error=response parsing error');
+          throw const LessonGenerationException('response parsing error');
+        }
       } catch (e) {
+        debugPrint('[LESSON] error=${classifyAiGenerationFailure(e)}');
         aiChapterLog('backend_failed_fallback_direct', {
           'error': classifyAiGenerationFailure(e),
           'web': kIsWeb,
+          'base': lessonBase,
         });
         if (kIsWeb) {
           throw LessonGenerationException(classifyAiGenerationFailure(e));
         }
       }
     } else if (kIsWeb) {
-      aiChapterLog('backend_unavailable', {'base': _workerBase});
+      debugPrint('[LESSON] error=network error');
+      aiChapterLog('backend_unavailable', {
+        'bases': _lessonBases.join(','),
+      });
       throw const LessonGenerationException('network error');
     }
 
@@ -152,18 +168,20 @@ class GeminiLessonGenerationService implements LessonGenerationService {
       topicName: lesson.topicName.trim().isEmpty ? question : lesson.topicName,
       question: question,
     );
-    if (isPlaceholderLesson(out, topic: question)) {
+    if (isMockPlaceholderLesson(out)) {
       aiChapterLog('placeholder_rejected', {'topic': question});
-      throw LessonGenerationException(
-        'response parsing error: generated lesson did not match the topic ($question)',
+      throw const LessonGenerationException(
+        'lesson generation: mock lesson rejected',
       );
     }
     if (out.mcqs.length < 5) {
       out = await _ensureMcqs(out, question, style?.displayName ?? subjectContext);
     }
-    if (out.pyqs.length < 3) {
-      out = await _ensurePyqs(out, question, style?.displayName ?? subjectContext);
-    }
+    out = await _attachPublishedPyqs(
+      out,
+      question,
+      style?.displayName ?? subjectContext,
+    );
     aiChapterLog('service_generate_done', {
       'title': out.topicName,
       'sections': out.slides.length,
@@ -176,31 +194,65 @@ class GeminiLessonGenerationService implements LessonGenerationService {
     return out;
   }
 
-  Future<bool> _backendHealthy() async {
-    try {
-      final response = await _client
-          .get(Uri.parse('$_workerBase/health'))
-          .timeout(const Duration(seconds: 8));
-      aiChapterLog('backend_health', {'status': response.statusCode});
-      return response.statusCode == 200;
-    } catch (e) {
-      aiChapterLog('backend_health', {'error': '$e'});
-      return false;
+  Future<String?> _pickHealthyLessonBase() async {
+    final pageHost = kIsWeb ? Uri.base.host : '';
+    final localOnly = shouldWaitForLocalAiWorker(
+      debug: kDebugMode,
+      isWeb: kIsWeb,
+      pageHost: pageHost,
+    );
+    final found = await firstHealthyAiBackendBase(
+      bases: _lessonBases,
+      waitForLocalWorker: localOnly,
+      healthStatus: (origin) async {
+        final uri = Uri.parse('$origin/health');
+        try {
+          final response =
+              await _client.get(uri).timeout(const Duration(seconds: 8));
+          aiChapterLog('backend_health', {
+            'endpoint': '$uri',
+            'status': response.statusCode,
+          });
+          return response.statusCode;
+        } catch (e) {
+          aiChapterLog('backend_health', {
+            'endpoint': '$uri',
+            'error': classifyAiGenerationFailure(e),
+          });
+          rethrow;
+        }
+      },
+    );
+    if (found != null && localOnly && !isLoopbackAiBackend(found)) {
+      debugPrint('[LESSON] error=network error');
+      return null;
     }
+    return found;
   }
 
   Future<GeneratedLesson> _generateViaBackend({
     required String question,
     String? subjectContext,
     MpscTeachingSubject? teachingSubject,
+    required String base,
   }) async {
-    final uri = Uri.parse('$_workerBase/ai/lesson');
+    final uri = Uri.parse(aiLessonEndpoint(base));
+    final headers = await backendJsonHeaders();
+    final hasToken = headers.containsKey('Authorization');
+    debugPrint('[LESSON] endpoint=$uri');
+    debugPrint('[LESSON] hasToken=$hasToken');
+    debugPrint('[LESSON] topic=${question.trim()}');
+    aiChapterLog('backend_lesson_request', {
+      'endpoint': '$uri',
+      'method': 'POST',
+      'hasToken': hasToken,
+    });
     http.Response response;
     try {
       response = await _client
           .post(
             uri,
-            headers: await backendJsonHeaders(),
+            headers: headers,
             body: jsonEncode({
               'topic': question,
               'subjectContext': subjectContext ?? '',
@@ -209,11 +261,21 @@ class GeminiLessonGenerationService implements LessonGenerationService {
           )
           .timeout(const Duration(seconds: 240));
     } catch (e) {
-      aiChapterLog('backend_unreachable', {'error': '$e'});
+      debugPrint('[LESSON] error=${classifyAiGenerationFailure(e)}');
+      aiChapterLog('backend_unreachable', {
+        'endpoint': '$uri',
+        'error': classifyAiGenerationFailure(e),
+      });
       throw LessonGenerationException(classifyAiGenerationFailure(e));
     }
-    aiChapterLog('backend_lesson_http', {'status': response.statusCode});
+    debugPrint('[LESSON] status=${response.statusCode}');
+    aiChapterLog('backend_lesson_http', {
+      'endpoint': '$uri',
+      'status': response.statusCode,
+      'bodyChars': response.body.length,
+    });
     if (response.statusCode != 200) {
+      debugPrint('[LESSON] error=HTTP ${response.statusCode}');
       aiChapterLog('backend_lesson_http', {
         'status': response.statusCode,
         'body': response.body.length > 240
@@ -228,20 +290,30 @@ class GeminiLessonGenerationService implements LessonGenerationService {
     }
     final decoded = jsonDecode(response.body);
     if (decoded is! Map) {
+      debugPrint('[LESSON] error=response parsing error');
       throw const LessonGenerationException('response parsing error');
     }
     final map = Map<String, dynamic>.from(decoded);
     if ('${map['error'] ?? ''}'.trim().isNotEmpty) {
-      debugPrint('[Gemini] backend error: ${map['error']}');
+      debugPrint('[LESSON] error=${classifyAiGenerationFailure(map['error']!)}');
       throw LessonGenerationException(
         classifyAiGenerationFailure(map['error']!),
       );
     }
     final raw = map['lesson'];
     if (raw is! Map) {
+      debugPrint('[LESSON] error=response parsing error');
       throw const LessonGenerationException('response parsing error');
     }
-    return GeneratedLesson.fromMap(Map<String, dynamic>.from(raw), '');
+    try {
+      final lesson =
+          GeneratedLesson.fromMap(Map<String, dynamic>.from(raw), '');
+      debugPrint('[LESSON] scenes=${lesson.slides.length}');
+      return lesson;
+    } catch (e) {
+      debugPrint('[LESSON] error=response parsing error');
+      throw const LessonGenerationException('response parsing error');
+    }
   }
 
   @override
@@ -313,23 +385,7 @@ class GeminiLessonGenerationService implements LessonGenerationService {
     String? subjectContext,
     int count = 10,
   }) async {
-    final n = count.clamp(1, 10);
-    final ctx = (subjectContext ?? '').trim();
-    final prompt = StringBuffer()
-      ..writeln('Topic: $topic')
-      ..writeln(ctx.isEmpty ? '' : 'Subject: $ctx')
-      ..writeln(
-        'Create EXACTLY $n MPSC previous-year-STYLE practice questions in Marathi. '
-        'Do NOT claim they are official PYQs. Set exam to "PYQ-based practice question". '
-        'Leave year empty. Each: question, answer, analysis. '
-        'Respond with ONLY JSON: {"pyqs":[...]}',
-      );
-    final map = await _generateJsonMap(
-      userParts: [
-        {'text': prompt.toString()},
-      ],
-    );
-    return asMapList(map['pyqs']).map(GeneratedPyq.fromMap).toList();
+    return _publishedPyqsFor(topic, subjectContext, count: count);
   }
 
   Future<GeneratedLesson> _ensureMcqs(
@@ -357,25 +413,58 @@ class GeminiLessonGenerationService implements LessonGenerationService {
     return lesson.copyWith(mcqs: mcqs.take(20).toList());
   }
 
-  Future<GeneratedLesson> _ensurePyqs(
+  Future<GeneratedLesson> _attachPublishedPyqs(
     GeneratedLesson lesson,
     String topic,
     String? subjectContext,
   ) async {
-    if (lesson.pyqs.length >= 10) {
-      return lesson.copyWith(pyqs: lesson.pyqs.take(10).toList());
-    }
+    final published = await _publishedPyqsFor(
+      topic,
+      subjectContext ?? lesson.subjectName,
+      count: 10,
+    );
+    return lesson.copyWith(pyqs: published);
+  }
+
+  Future<List<GeneratedPyq>> _publishedPyqsFor(
+    String topic,
+    String? subjectContext, {
+    int count = 10,
+  }) async {
+    final n = count.clamp(1, 10);
     try {
-      final extra = await generatePyqs(
-        topic: topic,
-        subjectContext: subjectContext ?? lesson.subjectName,
-        count: (10 - lesson.pyqs.length).clamp(1, 10),
-      );
-      final merged = [...lesson.pyqs, ...extra].take(10).toList();
-      return lesson.copyWith(pyqs: merged);
+      final published = await pyqRepository.watchPublished().first;
+      final needle = topic.trim().toLowerCase();
+      final subject = (subjectContext ?? '').trim().toLowerCase();
+      final matched = <PyqItem>[];
+      for (final item in published) {
+        if (!item.isStudentVisible) continue;
+        final blob =
+            '${item.title} ${item.question} ${item.subject} ${item.examName} ${item.tags.join(' ')}'
+                .toLowerCase();
+        final hit = (needle.isNotEmpty && blob.contains(needle)) ||
+            (subject.isNotEmpty && blob.contains(subject)) ||
+            (item.subject.trim().toLowerCase() == subject);
+        if (hit) matched.add(item);
+        if (matched.length >= n) break;
+      }
+      return [
+        for (final item in matched)
+          GeneratedPyq(
+            question: item.isStructuredQuestion
+                ? item.question.trim()
+                : item.title.trim(),
+            year: item.year?.toString() ?? '',
+            answer: item.answer,
+            analysis: item.explanation,
+            exam: item.examName.trim().isNotEmpty
+                ? item.examName.trim()
+                : 'Published PYQ',
+          ),
+      ];
     } catch (e) {
-      debugPrint('[Gemini] PYQ top-up failed: $e');
-      return lesson;
+      debugPrint('[PYQ] published lookup failed: $e');
+      return const [];
     }
   }
 

@@ -15,6 +15,8 @@ class SubjectItem {
     this.slug = '',
     this.nameEn = '',
     this.examId = kDefaultExamId,
+    this.stageId = '',
+    this.paperId = '',
     this.published = true,
     this.updatedAt,
   });
@@ -40,6 +42,12 @@ class SubjectItem {
   /// Parent exam (`exams/{examId}`). Default is MPSC Combine.
   final String examId;
 
+  /// `prelims` / `mains` (empty on legacy Combine subjects).
+  final String stageId;
+
+  /// Paper id on the parent exam (`paper1`, `general_ability_test`, …).
+  final String paperId;
+
   /// When false, students do not see this subject. Missing field ⇒ published.
   final bool published;
 
@@ -47,6 +55,9 @@ class SubjectItem {
 
   /// Alias for Marathi title (data-model docs / seed helpers).
   String get nameMr => title;
+
+  /// Phase-1 "active" flag — same as [published].
+  bool get active => published;
 
   IconData get icon => iconForName(iconName);
 
@@ -66,6 +77,8 @@ class SubjectItem {
       examId: (map['examId'] as String?)?.trim().isNotEmpty == true
           ? (map['examId'] as String).trim()
           : kDefaultExamId,
+      stageId: (map['stageId'] as String?)?.trim() ?? '',
+      paperId: (map['paperId'] as String?)?.trim() ?? '',
       published: asBool(map['published'], defaultValue: true),
       updatedAt: _parseUpdatedAt(map['updatedAt']),
     );
@@ -83,6 +96,8 @@ class SubjectItem {
       'imageUrl': imageUrl,
       'slug': slug,
       'examId': examId.isEmpty ? kDefaultExamId : examId,
+      if (stageId.isNotEmpty) 'stageId': stageId,
+      if (paperId.isNotEmpty) 'paperId': paperId,
       'published': published,
       'updatedAt': now,
     };
@@ -97,6 +112,8 @@ class SubjectItem {
     String? slug,
     String? nameEn,
     String? examId,
+    String? stageId,
+    String? paperId,
     bool? published,
     DateTime? updatedAt,
   }) {
@@ -110,6 +127,8 @@ class SubjectItem {
       slug: slug ?? this.slug,
       nameEn: nameEn ?? this.nameEn,
       examId: examId ?? this.examId,
+      stageId: stageId ?? this.stageId,
+      paperId: paperId ?? this.paperId,
       published: published ?? this.published,
       updatedAt: updatedAt ?? this.updatedAt,
     );

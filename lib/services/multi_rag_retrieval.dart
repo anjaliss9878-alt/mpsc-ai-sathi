@@ -83,12 +83,13 @@ class MultiRagRetrievalService implements MultiRagRetriever {
           topK: query.topKPerDomain,
           similarityThreshold: query.similarityThreshold,
           hybrid: query.hybrid,
+          onlyPublishedReady: query.onlyPublishedReady,
           scope: subjectId.isNotEmpty || chapterId.isNotEmpty
               ? RagSourceScope.subjectChapter
               : RagSourceScope.allPublished,
         ),
       );
-      if (remote != null) {
+      if (remote != null && remote.isNotEmpty) {
         for (final hit in remote) {
           final domain = inferRagDomain(
             ragDomain: hit.chunk.ragDomain,
@@ -151,16 +152,35 @@ class MultiRagRetrievalService implements MultiRagRetriever {
         topK: query.topKPerDomain,
         similarityThreshold: query.similarityThreshold,
         hybrid: query.hybrid,
+        onlyPublishedReady: query.onlyPublishedReady,
         scope: subjectId.isNotEmpty || chapterId.isNotEmpty
             ? RagSourceScope.subjectChapter
             : RagSourceScope.allPublished,
       );
 
-      final domainHits = await _retrieval.retrieve(
+      var domainHits = await _retrieval.retrieve(
         query: q,
         filter: filter,
         queryEmbedding: embedding,
       );
+      if (domainHits.isEmpty &&
+          (filter.examId.isNotEmpty ||
+              filter.subjectId.isNotEmpty ||
+              filter.chapterId.isNotEmpty ||
+              filter.topicId.isNotEmpty)) {
+        domainHits = await _retrieval.retrieve(
+          query: q,
+          filter: filter.copyWith(
+            examId: '',
+            subjectId: '',
+            chapterId: '',
+            topicId: '',
+            topicIds: const [],
+            scope: RagSourceScope.allPublished,
+          ),
+          queryEmbedding: embedding,
+        );
+      }
       for (final hit in domainHits) {
         final confidence = ragHitConfidence(hit);
         hits.add(

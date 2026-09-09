@@ -19,6 +19,7 @@ import 'package:mpsc_combine_ai/admin/rag/admin_rag_sources_screen.dart';
 import 'package:mpsc_combine_ai/admin/seed/mpsc_curriculum_seeder.dart';
 import 'package:mpsc_combine_ai/admin/seed/sample_content_seeder.dart';
 import 'package:mpsc_combine_ai/admin/smart_tricks/admin_smart_tricks_screen.dart';
+import 'package:mpsc_combine_ai/admin/study_packs/admin_study_pack_inbox_screen.dart';
 import 'package:mpsc_combine_ai/admin/students/admin_students_screen.dart';
 import 'package:mpsc_combine_ai/admin/teaching_slides/admin_teaching_slides_screen.dart';
 import 'package:mpsc_combine_ai/admin/tests/admin_tests_screen.dart';
@@ -29,8 +30,10 @@ import 'package:mpsc_combine_ai/models/audit_log_item.dart';
 import 'package:mpsc_combine_ai/services/admin_dashboard_stats_repository.dart';
 import 'package:mpsc_combine_ai/services/audit_log_repository.dart';
 import 'package:mpsc_combine_ai/services/auth_service.dart';
+import 'package:mpsc_combine_ai/theme/app_brand.dart';
 import 'package:mpsc_combine_ai/theme/app_colors.dart';
 import 'package:mpsc_combine_ai/utils/date_format.dart';
+import 'package:mpsc_combine_ai/widgets/app_brand_logo.dart';
 
 class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({super.key});
@@ -99,26 +102,30 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               padding: const EdgeInsets.all(16),
               child: Row(
                 children: [
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: AppColors.navy.withValues(alpha: 0.08),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Icon(Icons.verified_user_rounded, color: AppColors.navy),
-                  ),
+                  const AppBrandLogo(size: 48, borderRadius: 12),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text(
-                          'Signed in as',
+                          kAppName,
+                          style: TextStyle(
+                            fontWeight: FontWeight.w800,
+                            color: AppColors.textPrimary,
+                            fontSize: 16,
+                          ),
+                        ),
+                        const Text(
+                          'Admin Panel',
                           style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
                         ),
                         Text(
-                          email,
-                          style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                          email.isEmpty ? 'Signed in' : email,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textPrimary,
+                          ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -224,6 +231,16 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 icon: Icons.picture_as_pdf_rounded,
                 onTap: () => Navigator.of(context).push(
                   MaterialPageRoute<void>(builder: (_) => const AdminNotesScreen()),
+                ),
+              ),
+              AdminModuleCard(
+                title: 'Study Content Review',
+                subtitle: 'AI packs → notes draft · never auto-publish',
+                icon: Icons.rate_review_outlined,
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const AdminStudyPackInboxScreen(),
+                  ),
                 ),
               ),
               AdminModuleCard(

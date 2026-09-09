@@ -70,3 +70,47 @@ String classifyAiGenerationFailure(Object error) {
   if (first.isEmpty) return 'invalid request';
   return first;
 }
+
+/// Student classroom pipeline stage. Never treat empty RAG as a hard failure.
+String classifyClassroomPipelineStage(Object error) {
+  final type = error.runtimeType.toString();
+  final lower = '$error'.toLowerCase();
+  if (type.contains('AiTtsException') ||
+      lower.contains('empty lesson script') ||
+      lower.contains('tts') ||
+      lower.contains('audio') ||
+      lower.contains('voice') ||
+      lower.contains('आवाज')) {
+    return 'tts';
+  }
+  if (lower.contains('playback') || lower.contains('html audio')) {
+    return 'audio playback';
+  }
+  if (lower.contains('scene generation') ||
+      lower.contains('स्लाइड्स तयार') ||
+      lower.contains('slides were not')) {
+    return 'scene generation';
+  }
+  if (lower.contains('rag') &&
+      (lower.contains('failed') || lower.contains('error'))) {
+    return 'rag';
+  }
+  return 'lesson generation';
+}
+
+String classroomPipelineError(Object error, {String? stage}) {
+  final resolved = (stage ?? classifyClassroomPipelineStage(error)).trim();
+  final classified = classifyAiGenerationFailure(error);
+  switch (resolved) {
+    case 'tts':
+      return 'TTS failed — Retry ($classified)';
+    case 'audio playback':
+      return 'Audio playback failed — Retry ($classified)';
+    case 'scene generation':
+      return 'Scene generation failed — Retry ($classified)';
+    case 'rag':
+      return 'RAG failed — Retry ($classified)';
+    default:
+      return 'Lesson generation failed — Retry ($classified)';
+  }
+}

@@ -55,6 +55,7 @@ void main() {
     );
     expect(lesson.pyqs, hasLength(1));
     expect(lesson.mcqs, hasLength(1));
+    expect(lesson.slides.length, greaterThanOrEqualTo(4));
     expect(lesson.slides.first.narration.contains('%'), isFalse);
     expect(lesson.slides.first.narration.contains('/'), isFalse);
   });
@@ -106,5 +107,26 @@ void main() {
     );
     expect(isPlaceholderLesson(lesson, topic: 'sansad'), isFalse);
     expect(isPlaceholderLesson(lesson, topic: 'संसद'), isFalse);
+  });
+
+  test('English curriculum title plus Marathi slides is not a placeholder', () {
+    final lesson = GeneratedLesson(
+      question: 'Rainfall Distribution',
+      topicName: 'पर्जन्य वितरण',
+      subjectName: MpscTeachingSubject.geography.displayName,
+      script: const ['१', '२', '३', '४'],
+      slides: const [
+        GeneratedSlide(title: 'अर्थ', bullets: ['पर्जन्य'], narration: 'अर्थ.'),
+        GeneratedSlide(title: 'प्रकार', bullets: ['मान्सून'], narration: 'प्रकार.'),
+        GeneratedSlide(title: 'महाराष्ट्र', bullets: ['कोकण'], narration: 'स्थान.'),
+        GeneratedSlide(title: 'परीक्षा', bullets: ['MPSC'], narration: 'मुद्दा.'),
+      ],
+      summary: 'महाराष्ट्रातील पर्जन्याचे वितरण.',
+      mcqs: const [],
+      notes: const [],
+      createdAt: DateTime(2026, 1, 1),
+    );
+    expect(isPlaceholderLesson(lesson, topic: 'Rainfall Distribution'), isFalse);
+    expect(isMockPlaceholderLesson(lesson), isFalse);
   });
 }

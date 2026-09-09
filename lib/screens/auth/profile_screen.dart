@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:mpsc_combine_ai/screens/auth/signup_screen.dart' show targetExamOptions;
+import 'package:mpsc_combine_ai/data/student_onboarding.dart';
+import 'package:mpsc_combine_ai/widgets/target_exam_select_field.dart';
 import 'package:mpsc_combine_ai/screens/bookmarks/bookmarks_screen.dart';
 import 'package:mpsc_combine_ai/screens/certificates/certificates_screen.dart';
 import 'package:mpsc_combine_ai/screens/my_performance_screen.dart';
@@ -25,6 +26,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final _mobileController = TextEditingController();
 
   String? _targetExam;
+  String? _hoursBucket;
+  String? _studyMode;
+  String? _stage;
+  String? _language;
   bool _isLoading = true;
   bool _isSaving = false;
   String? _errorMessage;
@@ -60,6 +65,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
         _targetExam = (profile != null && profile.targetExam.isNotEmpty)
             ? profile.targetExam
             : null;
+        _hoursBucket = profile != null
+            ? dailyHoursBucketFromHours(profile.dailyStudyHours)
+            : null;
+        _studyMode = profile?.studyMode.isNotEmpty == true
+            ? profile!.studyMode
+            : null;
+        _stage = profile?.preparationStage.isNotEmpty == true
+            ? profile!.preparationStage
+            : null;
+        _language = profile?.preferredLanguage.isNotEmpty == true
+            ? profile!.preferredLanguage
+            : null;
       });
     } catch (e) {
       if (!mounted) return;
@@ -85,6 +102,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
         name: _nameController.text.trim(),
         mobile: _mobileController.text.trim(),
         targetExam: _targetExam ?? '',
+        dailyStudyHours: dailyHoursFromBucket(_hoursBucket ?? '4–6 hours'),
+        studyMode: _studyMode,
+        preparationStage: _stage,
+        preferredLanguage: _language,
       );
       if (!mounted) return;
       setState(() => _infoMessage = 'प्रोफाइल यशस्वीरित्या जतन झाली.\n'
@@ -111,11 +132,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final screenWidth = MediaQuery.sizeOf(context).width;
     final horizontalPadding = screenWidth > 600 ? 24.0 : 16.0;
     final maxContentWidth = screenWidth > 800 ? 800.0 : double.infinity;
+    final examItems = {
+      ...targetExamOptions,
+      if (_targetExam != null && _targetExam!.isNotEmpty) _targetExam!,
+    }.toList();
 
     return Scaffold(
       appBar: AppBar(
         title: const Text(
-          'प्रोफाइल',
+          'My Profile / Edit Study Preferences',
           style: TextStyle(fontWeight: FontWeight.w600),
         ),
         automaticallyImplyLeading: false,
@@ -248,21 +273,79 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     },
                   ),
                   const SizedBox(height: 14),
+                  TargetExamSelectField(
+                    value: examItems.contains(_targetExam) ? _targetExam : null,
+                    enabled: !_isSaving,
+                    onChanged: (value) => setState(() => _targetExam = value),
+                  ),
+                  const SizedBox(height: 14),
                   DropdownButtonFormField<String>(
-                    initialValue: _targetExam,
+                    initialValue: _hoursBucket,
                     decoration: const InputDecoration(
-                      labelText: 'लक्ष्य परीक्षा (Target Exam)',
-                      prefixIcon: Icon(Icons.flag_outlined),
+                      labelText: 'Daily study hours',
+                      prefixIcon: Icon(Icons.schedule_outlined),
                     ),
-                    items: targetExamOptions
-                        .map((exam) =>
-                            DropdownMenuItem(value: exam, child: Text(exam)))
+                    items: kDailyStudyHourOptions
+                        .map((h) => DropdownMenuItem(value: h, child: Text(h)))
                         .toList(),
                     onChanged: _isSaving
                         ? null
-                        : (value) => setState(() => _targetExam = value),
-                    validator: (value) =>
-                        value == null ? 'लक्ष्य परीक्षा निवडा' : null,
+                        : (value) => setState(() => _hoursBucket = value),
+                  ),
+                  const SizedBox(height: 14),
+                  DropdownButtonFormField<String>(
+                    initialValue: _studyMode,
+                    decoration: const InputDecoration(
+                      labelText: 'Study mode',
+                      prefixIcon: Icon(Icons.work_outline_rounded),
+                    ),
+                    items: const [
+                      DropdownMenuItem(
+                        value: kStudyModePartTime,
+                        child: Text('Part Time'),
+                      ),
+                      DropdownMenuItem(
+                        value: kStudyModeFullTime,
+                        child: Text('Full Time'),
+                      ),
+                    ],
+                    onChanged: _isSaving
+                        ? null
+                        : (value) => setState(() => _studyMode = value),
+                  ),
+                  const SizedBox(height: 14),
+                  DropdownButtonFormField<String>(
+                    initialValue: _stage != null &&
+                            kPreparationStageOptions.contains(_stage)
+                        ? _stage
+                        : null,
+                    decoration: const InputDecoration(
+                      labelText: 'Preparation stage',
+                      prefixIcon: Icon(Icons.trending_up_rounded),
+                    ),
+                    items: kPreparationStageOptions
+                        .map((s) => DropdownMenuItem(value: s, child: Text(s)))
+                        .toList(),
+                    onChanged: _isSaving
+                        ? null
+                        : (value) => setState(() => _stage = value),
+                  ),
+                  const SizedBox(height: 14),
+                  DropdownButtonFormField<String>(
+                    initialValue: _language != null &&
+                            kPreferredLanguageOptions.contains(_language)
+                        ? _language
+                        : null,
+                    decoration: const InputDecoration(
+                      labelText: 'Preferred language',
+                      prefixIcon: Icon(Icons.language_rounded),
+                    ),
+                    items: kPreferredLanguageOptions
+                        .map((s) => DropdownMenuItem(value: s, child: Text(s)))
+                        .toList(),
+                    onChanged: _isSaving
+                        ? null
+                        : (value) => setState(() => _language = value),
                   ),
                   const SizedBox(height: 20),
                   AuthSubmitButton(

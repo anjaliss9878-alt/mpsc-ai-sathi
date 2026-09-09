@@ -22,7 +22,7 @@ class AdminRagTestConsole extends StatefulWidget {
   const AdminRagTestConsole({
     super.key,
     this.initialQuestion = '',
-    this.initialExamId = kDefaultExamId,
+    this.initialExamId = kGroupBCombinedExamId,
     this.initialSubjectId = '',
     this.initialChapterId = '',
     this.initialTopicId = '',
@@ -43,7 +43,7 @@ class _AdminRagTestConsoleState extends State<AdminRagTestConsole> {
   late ContentIndexSelection _index = ContentIndexSelection(
     examId: widget.initialExamId.isNotEmpty
         ? widget.initialExamId
-        : kDefaultExamId,
+        : kGroupBCombinedExamId,
     subjectId: widget.initialSubjectId,
     chapterId: widget.initialChapterId,
     topicId: widget.initialTopicId,

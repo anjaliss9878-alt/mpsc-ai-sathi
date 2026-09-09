@@ -1082,19 +1082,23 @@ LessonPremiumExtras _premiumFromLessonMap(
   );
 }
 
-bool isPlaceholderLesson(GeneratedLesson lesson, {String topic = ''}) {
+bool isMockPlaceholderLesson(GeneratedLesson lesson) {
   final blob = [
     lesson.summary,
     lesson.topicName,
     ...lesson.notes,
     ...lesson.slides.map((s) => '${s.title} ${s.narration} ${s.bullets.join(' ')}'),
   ].join(' ').toLowerCase();
-  if (blob.contains('मॉक') ||
+  return blob.contains('मॉक') ||
       blob.contains('mock lesson') ||
       blob.contains('ai_api_key') ||
-      blob.contains('खऱ्या gemini')) {
-    return true;
-  }
+      blob.contains('खऱ्या gemini');
+}
+
+bool isPlaceholderLesson(GeneratedLesson lesson, {String topic = ''}) {
+  if (isMockPlaceholderLesson(lesson)) return true;
+  // English curriculum titles + Marathi Gemini slides are valid, not mocks.
+  if (lesson.slides.length >= 4) return false;
   final asked = topic.trim();
   if (asked.isEmpty) return false;
   final hay = [

@@ -1,5 +1,6 @@
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mpsc_combine_ai/models/exam_item.dart';
 import 'package:mpsc_combine_ai/models/note_item.dart';
 import 'package:mpsc_combine_ai/models/pdf_content_block.dart';
 import 'package:mpsc_combine_ai/services/notes_repository.dart';
@@ -32,8 +33,18 @@ void main() {
     expect(data['revisionSummary'], ['Sum A']);
     expect(data['contentMarkdown'], '');
     expect(data['published'], isTrue);
+    expect(data['examId'], kDefaultExamId);
     expect(data['attachments'], isEmpty);
     expect(data['mcqs'], isEmpty);
+  });
+
+  test('create note for Group B GAT uses Group B Combined examId', () async {
+    final id = await repo.saveNote(
+      subjectId: kGroupBSubjectPrelimsGatId,
+      chapterId: 'ch1',
+    );
+    final data = (await firestore.collection('notes').doc(id).get()).data()!;
+    expect(data['examId'], kGroupBCombinedExamId);
   });
 
   test('chapter-style update does not wipe importantPoints', () async {

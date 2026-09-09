@@ -2,6 +2,7 @@ import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mpsc_combine_ai/admin/seed/mpsc_curriculum_seeder.dart';
 import 'package:mpsc_combine_ai/data/subject_notes_data.dart';
+import 'package:mpsc_combine_ai/models/exam_item.dart';
 import 'package:mpsc_combine_ai/services/notes_repository.dart';
 
 void main() {
@@ -23,12 +24,15 @@ void main() {
     expect(first, contains('144 टॉपिक'));
 
     final subjects = await repo.getSubjectsOnce();
-    expect(subjects, hasLength(10));
-    expect(subjects.every((s) => s.slug.isNotEmpty), isTrue);
-    expect(subjects.every((s) => s.published), isTrue);
+    final combine = subjects
+        .where((s) => s.examId == kDefaultExamId || s.examId.isEmpty)
+        .toList();
+    expect(combine, hasLength(10));
+    expect(combine.every((s) => s.slug.isNotEmpty), isTrue);
+    expect(combine.every((s) => s.published), isTrue);
 
     var topicTotal = 0;
-    for (final s in subjects) {
+    for (final s in combine) {
       final chapters = await repo.getChaptersOnce(s.id);
       topicTotal += chapters.length;
       expect(chapters.every((c) => c.slug.isNotEmpty), isTrue);
@@ -39,7 +43,14 @@ void main() {
     final second = await seedMpscCurriculumStructure(repository: repo);
     expect(second, contains('+0'));
     final subjectsAgain = await repo.getSubjectsOnce();
-    expect(subjectsAgain, hasLength(10));
+    expect(
+      subjectsAgain.where((s) => s.examId == kDefaultExamId || s.examId.isEmpty),
+      hasLength(10),
+    );
+    expect(
+      subjectsAgain.where((s) => s.examId == kGroupBCombinedExamId),
+      hasLength(4),
+    );
   });
 
   test('published filters hide draft subjects/chapters', () async {
@@ -47,11 +58,13 @@ void main() {
     final repo = NotesRepository(firestore: firestore);
     await seedMpscCurriculumStructure(repository: repo);
     final subjects = await repo.getSubjectsOnce();
-    final first = subjects.first;
+    final first = subjects.firstWhere(
+      (s) => s.examId == kDefaultExamId || s.examId.isEmpty,
+    );
     await repo.updateSubject(first.copyWith(published: false));
 
     final published = await repo.watchPublishedSubjects().first;
     expect(published.any((s) => s.id == first.id), isFalse);
-    expect(published.length, 9);
+    expect(published.length, 13);
   });
 }

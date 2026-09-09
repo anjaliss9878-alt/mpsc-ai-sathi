@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:mpsc_combine_ai/models/rag_chunk.dart';
 import 'package:mpsc_combine_ai/models/rag_source.dart';
@@ -82,6 +83,10 @@ class RagRetrievalService {
         if (!matchesRagChunkMetadata(hit.chunk, filter)) continue;
         hits.add(hit);
       }
+      // Empty vector-index results must not skip the Firestore corpus
+      // (local worker /rag/retrieve is a stub; production must not hide
+      // newly indexed Admin uploads).
+      if (hits.isEmpty) return null;
       return _take(hits, filter.topK);
     } catch (_) {
       return null;
@@ -112,11 +117,41 @@ class RagRetrievalService {
 
     if (queryEmbedding == null) {
       final remote = await tryServerRetrieve(query: q, filter: filter);
-      if (remote != null) return remote;
+      if (remote != null && remote.isNotEmpty) {
+        _logFilterTrace(
+          query: q,
+          filter: filter,
+          sourcesLoaded: -1,
+          afterPublishedReady: -1,
+          afterSourceMetadata: -1,
+          chunksLoaded: remote.length,
+          afterChunkPublished: remote.length,
+          afterEmbedding: remote.length,
+          afterChunkMetadata: remote.length,
+          afterThreshold: remote.length,
+          path: 'server',
+        );
+        return remote;
+      }
     }
 
     final allowed = await _sources.resolveFilter(filter);
-    if (allowed.isEmpty) return const [];
+    if (allowed.isEmpty) {
+      _logFilterTrace(
+        query: q,
+        filter: filter,
+        sourcesLoaded: 0,
+        afterPublishedReady: 0,
+        afterSourceMetadata: 0,
+        chunksLoaded: 0,
+        afterChunkPublished: 0,
+        afterEmbedding: 0,
+        afterChunkMetadata: 0,
+        afterThreshold: 0,
+        path: 'local',
+      );
+      return const [];
+    }
     final allowedIds = allowed.map((s) => s.id).toSet();
 
     List<double> embedding;
@@ -138,6 +173,7 @@ class RagRetrievalService {
     }
 
     var candidates = await _loadCandidates(filter, allowed);
+    final chunksLoaded = candidates.length;
     if (nearest != null && nearest.isNotEmpty) {
       final fromIndex = nearest
           .where((c) => allowedIds.contains(c.sourceId) && c.embedding.isNotEmpty)
@@ -146,13 +182,33 @@ class RagRetrievalService {
         candidates = fromIndex;
       }
     }
-    candidates = candidates
+    final afterSourceId = candidates
         .where((c) => allowedIds.contains(c.sourceId))
-        .where((c) => c.embedding.isNotEmpty)
+        .toList();
+    final afterEmbedding =
+        afterSourceId.where((c) => c.embedding.isNotEmpty).toList();
+    final afterChunkPublished = afterEmbedding
         .where((c) => !filter.onlyPublishedReady || c.published)
+        .toList();
+    candidates = afterChunkPublished
         .where((c) => matchesRagChunkMetadata(c, filter))
         .toList();
-    if (candidates.isEmpty) return const [];
+    if (candidates.isEmpty) {
+      _logFilterTrace(
+        query: q,
+        filter: filter,
+        sourcesLoaded: -1,
+        afterPublishedReady: allowed.length,
+        afterSourceMetadata: allowed.length,
+        chunksLoaded: chunksLoaded,
+        afterChunkPublished: afterChunkPublished.length,
+        afterEmbedding: afterEmbedding.length,
+        afterChunkMetadata: 0,
+        afterThreshold: 0,
+        path: 'local',
+      );
+      return const [];
+    }
 
     try {
       final vectorHits = _rankVector(
@@ -160,19 +216,32 @@ class RagRetrievalService {
         embedding,
         threshold: 0,
       );
-      if (!filter.hybrid) {
-        return _take(
-          vectorHits.where((h) => h.score >= filter.similarityThreshold),
-          filter.topK,
-        );
-      }
-      return _hybrid(
+      final hits = !filter.hybrid
+          ? _take(
+              vectorHits.where((h) => h.score >= filter.similarityThreshold),
+              filter.topK,
+            )
+          : _hybrid(
+              query: q,
+              candidates: candidates,
+              vectorHits: vectorHits,
+              topK: filter.topK,
+              threshold: filter.similarityThreshold,
+            );
+      _logFilterTrace(
         query: q,
-        candidates: candidates,
-        vectorHits: vectorHits,
-        topK: filter.topK,
-        threshold: filter.similarityThreshold,
+        filter: filter,
+        sourcesLoaded: -1,
+        afterPublishedReady: allowed.length,
+        afterSourceMetadata: allowed.length,
+        chunksLoaded: chunksLoaded,
+        afterChunkPublished: afterChunkPublished.length,
+        afterEmbedding: afterEmbedding.length,
+        afterChunkMetadata: candidates.length,
+        afterThreshold: hits.length,
+        path: 'local',
       );
+      return hits;
     } catch (e) {
       throw RagException.vectorSearch('$e');
     }
@@ -183,8 +252,15 @@ class RagRetrievalService {
     List<RagSource> allowed,
   ) async {
     final sourceIds = allowed.map((s) => s.id).toList();
-    if (!filter.onlyPublishedReady && sourceIds.length == 1) {
-      return _chunks.getForSource(sourceIds.first);
+    if (!filter.onlyPublishedReady) {
+      if (sourceIds.length == 1) {
+        return _chunks.getForSource(sourceIds.first);
+      }
+      final out = <RagChunk>[];
+      for (final id in sourceIds) {
+        out.addAll(await _chunks.getForSource(id));
+      }
+      return out;
     }
     return _chunks.getPublished(
       sourceIds: filter.scope == RagSourceScope.selectedSources ||
@@ -295,6 +371,33 @@ class RagRetrievalService {
   List<RagHit> _take(Iterable<RagHit> hits, int topK) {
     final k = topK < 1 ? 8 : topK;
     return hits.take(k).toList(growable: false);
+  }
+
+  void _logFilterTrace({
+    required String query,
+    required RagSourceFilter filter,
+    required int sourcesLoaded,
+    required int afterPublishedReady,
+    required int afterSourceMetadata,
+    required int chunksLoaded,
+    required int afterChunkPublished,
+    required int afterEmbedding,
+    required int afterChunkMetadata,
+    required int afterThreshold,
+    required String path,
+  }) {
+    debugPrint(
+      'RAG retrieve [$path] q="${query.length > 48 ? query.substring(0, 48) : query}" '
+      'filters examId=${filter.examId} subjectId=${filter.subjectId} '
+      'chapterId=${filter.chapterId} topicId=${filter.topicId} '
+      'domains=${[for (final d in filter.domains) ragDomainToString(d)]} '
+      'onlyPublishedReady=${filter.onlyPublishedReady} '
+      'threshold=${filter.similarityThreshold} '
+      'sourcesLoaded=$sourcesLoaded afterReady=$afterPublishedReady '
+      'afterSourceMeta=$afterSourceMetadata chunksLoaded=$chunksLoaded '
+      'afterEmbedding=$afterEmbedding afterChunkPublished=$afterChunkPublished '
+      'afterChunkMeta=$afterChunkMetadata afterThreshold=$afterThreshold',
+    );
   }
 }
 

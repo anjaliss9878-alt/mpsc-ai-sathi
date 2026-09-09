@@ -17,7 +17,7 @@ class PdfStructureExtractService {
 
   final http.Client _client;
 
-  static const String _apiKey = String.fromEnvironment('AI_API_KEY');
+  static const String _apiKey = '';
   static const String _model = String.fromEnvironment(
     'AI_MODEL',
     defaultValue: 'gemini-flash-latest',

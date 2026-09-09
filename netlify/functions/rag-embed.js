@@ -1,6 +1,6 @@
 const { json } = require('../lib/cors');
 const { withAuth } = require('../lib/auth');
-const { embedTexts } = require('../lib/gemini');
+const { embedTextsPreferVertex } = require('../lib/vertex');
 
 exports.handler = async (event) => {
   const gated = await withAuth(event);
@@ -13,8 +13,8 @@ exports.handler = async (event) => {
       return json(400, { error: 'at most 32 texts per request' }, event);
     }
     const task = `${map.task || 'document'}`.trim();
-    const embeddings = await embedTexts({ texts, task });
-    return json(200, { embeddings }, event);
+    const result = await embedTextsPreferVertex({ texts, task });
+    return json(200, result, event);
   } catch (e) {
     return json(500, { error: e.publicMessage || 'embedding failure' }, event);
   }

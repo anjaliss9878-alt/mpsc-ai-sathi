@@ -10,7 +10,9 @@ import 'package:mpsc_combine_ai/models/content_index.dart';
 import 'package:mpsc_combine_ai/models/pyq_item.dart';
 import 'package:mpsc_combine_ai/services/audit_log_repository.dart';
 import 'package:mpsc_combine_ai/services/content_knowledge_indexer.dart';
+import 'package:mpsc_combine_ai/services/pyq_analysis_service.dart';
 import 'package:mpsc_combine_ai/services/pyq_repository.dart';
+import 'package:mpsc_combine_ai/theme/app_colors.dart';
 import 'package:mpsc_combine_ai/widgets/async_state_widgets.dart';
 
 class AdminPyqsScreen extends StatefulWidget {
@@ -32,8 +34,8 @@ class _AdminPyqsScreenState extends State<AdminPyqsScreen> {
 
   Future<void> _setStatus(PyqItem item, NoteWorkflowStatus status) async {
     try {
+      await pyqRepository.updateWorkflow(item.id, status);
       final next = item.copyWith(status: status);
-      await pyqRepository.update(next);
       try {
         await contentKnowledgeIndexer.syncPyq(next);
       } catch (_) {}
@@ -109,6 +111,7 @@ class _AdminPyqsScreenState extends State<AdminPyqsScreen> {
               .toList()
             ..sort((a, b) => b.compareTo(a));
           final items = _filter(allItems);
+          final analysis = analyzeUploadedPyqs(allItems);
           return Column(
             children: [
               AdminContentFilterBar(
@@ -128,6 +131,7 @@ class _AdminPyqsScreenState extends State<AdminPyqsScreen> {
                 onTopicIdChanged: (v) => setState(() => _topicId = v),
                 showIndexFilters: true,
               ),
+              _PyqAnalysisStrip(analysis: analysis),
               if (years.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
@@ -247,3 +251,70 @@ class _AdminPyqsScreenState extends State<AdminPyqsScreen> {
     );
   }
 }
+
+class _PyqAnalysisStrip extends StatelessWidget {
+  const _PyqAnalysisStrip({required this.analysis});
+
+  final PyqAnalysis analysis;
+
+  @override
+  Widget build(BuildContext context) {
+    if (analysis.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
+        child: Text(
+          'PYQ analysis appears after approved/published PYQs are uploaded.',
+          style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+        ),
+      );
+    }
+    String freq(List<PyqFrequencyRow> rows) => rows.isEmpty
+        ? '—'
+        : rows.take(4).map((r) => '${r.label} (${r.count})').join(' · ');
+    final difficulty = analysis.difficultyDistribution.entries
+        .map((e) => '${e.key} ${e.value}')
+        .join(' · ');
+    final priority = analysis.preparationPriority.isEmpty
+        ? '—'
+        : analysis.preparationPriority
+            .take(4)
+            .map((r) => r.label)
+            .join(' · ');
+    final concepts = analysis.repeatedConcepts.isEmpty
+        ? '—'
+        : analysis.repeatedConcepts.take(6).map((c) => c.concept).join(', ');
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      child: Card(
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'PYQ analysis (${analysis.analyzedCount} approved)',
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 6),
+              Text('Topic frequency: ${freq(analysis.topicFrequency)}',
+                  style: const TextStyle(fontSize: 12)),
+              Text('Chapter frequency: ${freq(analysis.chapterFrequency)}',
+                  style: const TextStyle(fontSize: 12)),
+              Text('Repeated concepts: $concepts',
+                  style: const TextStyle(fontSize: 12)),
+              Text(
+                'Important areas: ${freq(analysis.importantAreas)}',
+                style: const TextStyle(fontSize: 12),
+              ),
+              Text('Difficulty: $difficulty',
+                  style: const TextStyle(fontSize: 12)),
+              Text('Preparation priority: $priority',
+                  style: const TextStyle(fontSize: 12)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+

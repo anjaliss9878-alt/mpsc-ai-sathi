@@ -234,11 +234,15 @@ class StudentProgressRepository {
     String uid,
     TestResult result, {
     String? testId,
+    String? attemptId,
     String kind = 'test',
     String subjectId = '',
     String chapterId = '',
+    String areaId = '',
   }) async {
-    final id = '${result.dateTime.millisecondsSinceEpoch}';
+    final id = (attemptId != null && attemptId.trim().isNotEmpty)
+        ? attemptId.trim()
+        : '${result.dateTime.millisecondsSinceEpoch}';
     await _col(uid, 'testAttempts').doc(id).set({
       'testId': testId ?? '',
       'testTitle': result.testTitle,
@@ -254,6 +258,7 @@ class StudentProgressRepository {
       'kind': kind,
       'subjectId': subjectId,
       'chapterId': chapterId,
+      'areaId': areaId,
       'questionResults': result.questionResults
           .map(
             (q) => {
@@ -266,6 +271,42 @@ class StudentProgressRepository {
           )
           .toList(),
     });
+  }
+
+  Future<void> saveDiagnosticAttempt(
+    String uid,
+    Map<String, dynamic> data, {
+    required String attemptId,
+  }) async {
+    await _col(uid, 'diagnosticAttempts').doc(attemptId).set(data);
+  }
+
+  Future<Map<String, dynamic>?> latestDiagnosticAttempt(String uid) async {
+    final snap = await _col(uid, 'diagnosticAttempts').get();
+    if (snap.docs.isEmpty) return null;
+    final docs = snap.docs.toList()
+      ..sort((a, b) {
+        final aAt = '${a.data()['completedAt'] ?? ''}';
+        final bAt = '${b.data()['completedAt'] ?? ''}';
+        return bAt.compareTo(aAt);
+      });
+    final data = Map<String, dynamic>.from(docs.first.data());
+    data['id'] = docs.first.id;
+    return data;
+  }
+
+  Future<Map<String, dynamic>?> previousDiagnosticAttempt(String uid) async {
+    final snap = await _col(uid, 'diagnosticAttempts').get();
+    if (snap.docs.length < 2) return null;
+    final docs = snap.docs.toList()
+      ..sort((a, b) {
+        final aAt = '${a.data()['completedAt'] ?? ''}';
+        final bAt = '${b.data()['completedAt'] ?? ''}';
+        return bAt.compareTo(aAt);
+      });
+    final data = Map<String, dynamic>.from(docs[1].data());
+    data['id'] = docs[1].id;
+    return data;
   }
 
   // ── Certificates ──────────────────────────────────────────────────────
@@ -390,16 +431,29 @@ class StudentProgressRepository {
     var completed = 0;
     var total = 0;
     var days = 0;
+    var mcq = 0;
+    var pyq = 0;
+    var missed = 0;
     for (final plan in plans) {
       if (!keys.contains(plan.dateKey)) continue;
       days++;
       total += plan.actionableCount;
       completed += plan.completedCount;
+      for (final t in plan.tasks) {
+        if (t.isDone && t.type == DailyPlanTaskType.practiceMcq) mcq++;
+        if (t.isDone && t.type == DailyPlanTaskType.pyq) pyq++;
+        if (t.status == DailyPlanTaskStatus.skipped || t.isCarriedForward) {
+          missed++;
+        }
+      }
     }
     return WeeklyPlannerProgress(
       completedTasks: completed,
       totalTasks: total,
       daysWithPlan: days,
+      mcqCompleted: mcq,
+      pyqCompleted: pyq,
+      missedTasks: missed,
     );
   }
 
@@ -711,6 +765,7 @@ class PersistedTestAttempt {
     this.kind = 'test',
     this.subjectId = '',
     this.chapterId = '',
+    this.areaId = '',
     this.questionResults = const [],
   });
 
@@ -729,6 +784,7 @@ class PersistedTestAttempt {
   final String kind;
   final String subjectId;
   final String chapterId;
+  final String areaId;
   final List<QuestionResult> questionResults;
 
   factory PersistedTestAttempt.fromMap(Map<String, dynamic> map, String id) {
@@ -749,6 +805,7 @@ class PersistedTestAttempt {
       kind: map['kind'] as String? ?? _kindFromTitle(map['testTitle'] as String?),
       subjectId: map['subjectId'] as String? ?? '',
       chapterId: map['chapterId'] as String? ?? '',
+      areaId: map['areaId'] as String? ?? '',
       questionResults: asMapList(map['questionResults']).map((m) {
         return QuestionResult(
           question: m['question'] as String? ?? '',

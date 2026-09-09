@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:mpsc_combine_ai/models/current_affair_item.dart';
 
@@ -25,9 +27,47 @@ class CurrentAffairsRepository {
   /// Students only see published entries. Legacy docs without status stay
   /// visible (treated as published).
   Stream<List<CurrentAffairItem>> watchPublished() {
-    return watchAll().map(
-      (all) => all.where((e) => e.isStudentVisible).toList(),
-    );
+    return Stream.multi((controller) {
+      StreamSubscription<List<CurrentAffairItem>>? sub;
+      var usingFallback = false;
+
+      List<CurrentAffairItem> filter(List<CurrentAffairItem> all) =>
+          all.where((e) => e.isStudentVisible).toList();
+
+      void listenPublished({required bool requirePublishedStatus}) {
+        Query<Map<String, dynamic>> query =
+            _ref.where('published', isEqualTo: true);
+        if (requirePublishedStatus) {
+          query = query.where('status', isEqualTo: 'published');
+        }
+        sub = query.snapshots().map((snap) {
+          final items = snap.docs
+              .map((d) => CurrentAffairItem.fromMap(d.data(), d.id))
+              .toList()
+            ..sort((a, b) => b.date.compareTo(a.date));
+          return filter(items);
+        }).listen(
+          controller.add,
+          onError: (Object error, StackTrace stackTrace) {
+            if (!usingFallback &&
+                !requirePublishedStatus &&
+                error.toString().contains('permission-denied')) {
+              usingFallback = true;
+              sub?.cancel();
+              listenPublished(requirePublishedStatus: true);
+              return;
+            }
+            controller.addError(error, stackTrace);
+          },
+          onDone: controller.close,
+        );
+      }
+
+      listenPublished(requirePublishedStatus: false);
+      controller.onCancel = () async {
+        await sub?.cancel();
+      };
+    });
   }
 
   Future<String> add(CurrentAffairItem item) async {

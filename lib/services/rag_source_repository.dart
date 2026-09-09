@@ -134,6 +134,9 @@ class RagSourceRepository {
     Iterable<RagSource> list = sources;
     if (filter.onlyPublishedReady) {
       list = list.where((s) => s.isUsableForRetrieval);
+    } else {
+      // Admin Search/Test: Ready + embedded, including unpublished drafts.
+      list = list.where((s) => s.isReady);
     }
     switch (filter.scope) {
       case RagSourceScope.allPublished:

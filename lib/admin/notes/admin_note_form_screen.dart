@@ -3,7 +3,9 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
+import 'package:mpsc_combine_ai/admin/widgets/admin_file_pick_button.dart';
 import 'package:mpsc_combine_ai/admin/widgets/admin_scaffold.dart';
+import 'package:mpsc_combine_ai/admin/widgets/admin_select_field.dart';
 import 'package:mpsc_combine_ai/admin/widgets/confirm_delete_dialog.dart';
 import 'package:mpsc_combine_ai/admin/widgets/line_list_field.dart';
 import 'package:mpsc_combine_ai/models/chapter_item.dart';
@@ -90,7 +92,7 @@ class _AdminNoteFormScreenState extends State<AdminNoteFormScreen> {
   String _ragError = '';
   String _ragSourceId = '';
 
-  String _examId = kDefaultExamId;
+  String _examId = kGroupBCombinedExamId;
   String _subjectId = '';
   String _chapterId = '';
   String _topicId = '';
@@ -147,7 +149,7 @@ class _AdminNoteFormScreenState extends State<AdminNoteFormScreen> {
   @override
   void initState() {
     super.initState();
-    _examId = widget.examId.isNotEmpty ? widget.examId : kDefaultExamId;
+    _examId = widget.examId.isNotEmpty ? widget.examId : kGroupBCombinedExamId;
     _subjectId = widget.subjectId;
     _subjectTitle = widget.subjectTitle;
     final parent = widget.parentChapter;
@@ -332,16 +334,19 @@ class _AdminNoteFormScreenState extends State<AdminNoteFormScreen> {
     });
   }
 
-  Future<void> _pickPdf({bool replace = false}) async {
-    final result = await FilePicker.platform.pickFiles(
-      withData: true,
-      type: FileType.custom,
-      allowedExtensions: const ['pdf'],
-    );
-    if (result == null || result.files.isEmpty) return;
-    final file = result.files.first;
-    final bytes = file.bytes;
-    if (bytes == null || bytes.isEmpty) {
+  Future<void> _onPdfPicked(
+    AdminPickedLocalFile picked, {
+    required bool replace,
+  }) {
+    return _uploadPickedPdf(picked.name, picked.bytes, replace: replace);
+  }
+
+  Future<void> _uploadPickedPdf(
+    String fileName,
+    Uint8List bytes, {
+    required bool replace,
+  }) async {
+    if (bytes.isEmpty) {
       if (mounted) showAdminMessage(context, 'Could not read the selected PDF.');
       return;
     }
@@ -352,7 +357,7 @@ class _AdminNoteFormScreenState extends State<AdminNoteFormScreen> {
     try {
       final uploaded = await storageService.uploadBytesDetailed(
         folder: 'notes',
-        fileName: file.name,
+        fileName: fileName,
         bytes: bytes,
         contentType: 'application/pdf',
       );
@@ -363,10 +368,10 @@ class _AdminNoteFormScreenState extends State<AdminNoteFormScreen> {
       setState(() {
         _attachments = [
           ..._attachments.where((a) => a.type != 'pdf'),
-          NoteAttachment(name: file.name, url: uploaded.url, type: 'pdf'),
+          NoteAttachment(name: fileName, url: uploaded.url, type: 'pdf'),
         ];
         _pdfStoragePath = uploaded.path;
-        _pdfFileName = file.name;
+        _pdfFileName = fileName;
         _pdfFileSize = uploaded.byteCount;
         _pdfPageCount = pdfPageCountFromBytes(Uint8List.fromList(bytes)) ?? 0;
         _pdfBytes = Uint8List.fromList(bytes);
@@ -381,7 +386,7 @@ class _AdminNoteFormScreenState extends State<AdminNoteFormScreen> {
       try {
         final blocks = await pdfStructureExtractService.extractFromPdfBytes(
           bytes: Uint8List.fromList(bytes),
-          fileName: file.name,
+          fileName: fileName,
           topicHint: _titleController.text.trim(),
         );
         if (mounted) setState(() => _pdfBlocks = blocks);
@@ -391,7 +396,7 @@ class _AdminNoteFormScreenState extends State<AdminNoteFormScreen> {
       if (mounted) {
         showAdminMessage(
           context,
-          replace ? 'Replaced PDF: ${file.name}' : 'Uploaded ${file.name}',
+          replace ? 'Replaced PDF: $fileName' : 'Uploaded $fileName',
         );
       }
     } catch (e) {
@@ -452,6 +457,30 @@ class _AdminNoteFormScreenState extends State<AdminNoteFormScreen> {
       }
     });
     await storageService.deleteByUrl(attachment.url);
+    final noteId = _noteId;
+    if (attachment.type == 'pdf' && noteId != null && noteId.isNotEmpty) {
+      try {
+        await noteRagIndexer.deleteLinkedRag(
+          NoteItem(
+            id: noteId,
+            subjectId: _subjectId,
+            chapterId: _chapterId,
+            importantPoints: const [],
+            revisionSummary: const [],
+            ragSourceId: _ragSourceId,
+          ),
+        );
+        if (mounted) {
+          setState(() {
+            _ragSourceId = '';
+            _ragStatus = NoteRagStatus.notIndexed;
+            _ragError = '';
+          });
+        }
+      } catch (e) {
+        if (mounted) showAdminError(context, e);
+      }
+    }
   }
 
   Future<void> _pickAndUploadVideo() async {
@@ -552,7 +581,17 @@ class _AdminNoteFormScreenState extends State<AdminNoteFormScreen> {
         module: 'Notes',
         targetLabel: title,
       );
-      final saved = await notesRepository.getNote(savedId);
+      var saved = await notesRepository.getNote(savedId);
+      if (saved != null && saved.pdfUrl.trim().isEmpty) {
+        try {
+          await noteRagIndexer.deleteLinkedRag(saved, patchNote: true);
+          saved = await notesRepository.getNote(savedId) ?? saved;
+        } catch (_) {}
+      } else if (saved != null) {
+        try {
+          await noteRagIndexer.syncPublished(saved);
+        } catch (_) {}
+      }
       if (!mounted) return saved;
       setState(() {
         _noteId = savedId;
@@ -674,6 +713,17 @@ class _AdminNoteFormScreenState extends State<AdminNoteFormScreen> {
     if (!confirmed) return;
     setState(() => _isDeleting = true);
     try {
+      await noteRagIndexer.deleteLinkedRag(
+        NoteItem(
+          id: id,
+          subjectId: _subjectId,
+          chapterId: _chapterId,
+          importantPoints: const [],
+          revisionSummary: const [],
+          ragSourceId: _ragSourceId,
+        ),
+        patchNote: false,
+      );
       await notesRepository.deleteNote(id);
       for (final a in _attachments) {
         await storageService.deleteByUrl(a.url);
@@ -710,10 +760,15 @@ class _AdminNoteFormScreenState extends State<AdminNoteFormScreen> {
             '${_updatedAt!.month.toString().padLeft(2, '0')}/'
             '${_updatedAt!.year}';
     final pdf = _pdf;
-    final examItems = _exams.isEmpty ? [ExamItem.mpscCombine()] : _exams;
-    final subjectItems = _subjects
-        .where((s) => s.examId == _examId || s.examId.isEmpty)
-        .toList();
+    final examItems = uniqueAdminSelectItems([
+      for (final e in (_exams.isEmpty ? [ExamItem.mpscCombine()] : _exams))
+        AdminSelectItem(id: e.id, label: e.title),
+    ]);
+    final subjectItems = uniqueAdminSelectItems([
+      for (final s in _subjects)
+        if (s.examId == _examId || s.examId.isEmpty)
+          AdminSelectItem(id: s.id, label: s.title),
+    ]);
     final topicItems = _topics.isEmpty && _chapterId.isNotEmpty
         ? [
             ChapterItem(
@@ -746,52 +801,41 @@ class _AdminNoteFormScreenState extends State<AdminNoteFormScreen> {
           style: const TextStyle(color: Colors.grey, fontSize: 12),
         ),
         const AdminSectionLabel(label: 'Content index'),
-        DropdownButtonFormField<String>(
-          value: examItems.any((e) => e.id == _examId) ? _examId : examItems.first.id,
-          decoration: const InputDecoration(labelText: 'Exam'),
-          items: [
-            for (final e in examItems)
-              DropdownMenuItem(value: e.id, child: Text(e.title)),
-          ],
-          onChanged: (v) {
-            if (v != null) _onExamChanged(v);
-          },
+        AdminSelectField(
+          label: 'Exam',
+          value: committedSelectId(_examId, examItems.map((e) => e.id)),
+          items: examItems,
+          onChanged: _onExamChanged,
         ),
         const SizedBox(height: 12),
-        DropdownButtonFormField<String>(
-          value: subjectItems.any((s) => s.id == _subjectId) ? _subjectId : null,
-          decoration: const InputDecoration(labelText: 'Subject'),
-          items: [
-            for (final s in subjectItems)
-              DropdownMenuItem(value: s.id, child: Text(s.title)),
-          ],
-          onChanged: (v) {
-            if (v != null) _onSubjectChanged(v);
-          },
+        AdminSelectField(
+          label: 'Subject',
+          value: committedSelectId(_subjectId, subjectItems.map((e) => e.id)),
+          items: subjectItems,
+          onChanged: _onSubjectChanged,
         ),
         const SizedBox(height: 12),
-        DropdownButtonFormField<String>(
-          value: _rootChapters.any((c) => c.id == _chapterId) ? _chapterId : null,
-          decoration: const InputDecoration(labelText: 'Chapter'),
+        AdminSelectField(
+          label: 'Chapter',
+          value: committedSelectId(
+            _chapterId,
+            _rootChapters.map((c) => c.id),
+          ),
           items: [
             for (final c in _rootChapters)
-              DropdownMenuItem(value: c.id, child: Text(c.title)),
+              AdminSelectItem(id: c.id, label: c.title),
           ],
-          onChanged: (v) {
-            if (v != null) _onChapterChanged(v);
-          },
+          onChanged: _onChapterChanged,
         ),
         const SizedBox(height: 12),
-        DropdownButtonFormField<String>(
-          value: topicItems.any((t) => t.id == _topicId) ? _topicId : null,
-          decoration: const InputDecoration(labelText: 'Topic'),
+        AdminSelectField(
+          label: 'Topic',
+          value: committedSelectId(_topicId, topicItems.map((t) => t.id)),
           items: [
             for (final t in topicItems)
-              DropdownMenuItem(value: t.id, child: Text(t.title)),
+              AdminSelectItem(id: t.id, label: t.title),
           ],
-          onChanged: (v) {
-            if (v != null) setState(() => _topicId = v);
-          },
+          onChanged: (v) => setState(() => _topicId = v),
         ),
         const AdminSectionLabel(label: 'Note details'),
         TextField(
@@ -897,10 +941,12 @@ class _AdminNoteFormScreenState extends State<AdminNoteFormScreen> {
             spacing: 8,
             runSpacing: 8,
             children: [
-              OutlinedButton.icon(
-                onPressed: _isUploadingAttachment ? null : () => _pickPdf(replace: true),
-                icon: const Icon(Icons.swap_horiz_rounded),
-                label: const Text('Replace PDF'),
+              AdminFilePickButton(
+                label: 'Replace PDF',
+                icon: Icons.swap_horiz_rounded,
+                allowedExtensions: const ['pdf'],
+                enabled: !_isUploadingAttachment,
+                onPicked: (picked) => _onPdfPicked(picked, replace: true),
               ),
               OutlinedButton.icon(
                 onPressed: () => _removeAttachment(pdf),
@@ -912,10 +958,12 @@ class _AdminNoteFormScreenState extends State<AdminNoteFormScreen> {
         ] else if (_isUploadingAttachment)
           const LinearProgressIndicator()
         else
-          OutlinedButton.icon(
-            onPressed: _pickPdf,
-            icon: const Icon(Icons.picture_as_pdf_rounded),
-            label: const Text('Upload PDF'),
+          AdminFilePickButton(
+            label: 'Upload PDF',
+            icon: Icons.picture_as_pdf_rounded,
+            allowedExtensions: const ['pdf'],
+            enabled: !_isUploadingAttachment,
+            onPicked: (picked) => _onPdfPicked(picked, replace: false),
           ),
         if (_ragError.isNotEmpty)
           Padding(

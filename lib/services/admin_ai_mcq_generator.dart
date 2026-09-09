@@ -13,7 +13,7 @@ class AdminAiMcqGenerator {
   AdminAiMcqGenerator({
     RagGroundedLearningService? rag,
     GeminiRestClient? gemini,
-    this.apiKey = const String.fromEnvironment('AI_API_KEY'),
+    this.apiKey = '',
   })  : _rag = rag,
         _gemini = gemini;
 

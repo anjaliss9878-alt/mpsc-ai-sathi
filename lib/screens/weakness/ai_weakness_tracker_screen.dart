@@ -266,6 +266,15 @@ class _OverviewCard extends StatelessWidget {
                 'वेळ: ${(analysis.timeSpentSeconds / 60).round()} मि',
                 style: const TextStyle(color: AppColors.textSecondary),
               ),
+            if (analysis.diagnosticComparisons.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              const Text(
+                'Diagnostic → latest',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+              for (final line in analysis.diagnosticComparisons)
+                Text(line, style: const TextStyle(color: AppColors.textSecondary)),
+            ],
             const SizedBox(height: 8),
             Text(
               'Strong ≥ ${snapshot.thresholds.strongMin.round()}% · '
@@ -312,6 +321,8 @@ class _WeakAreaCard extends StatelessWidget {
             const SizedBox(height: 6),
             Text(
               'Accuracy: ${topic.accuracyPercent.round()}%  ·  '
+              'Latest: ${topic.latestPercent.round()}%  ·  '
+              'Best: ${topic.bestPercent.round()}%  ·  '
               'Attempts: ${topic.attempted}  ·  '
               'Correct ${topic.correct} / Wrong ${topic.wrong}  ·  '
               'Trend: ${topic.trend.label}  ·  '
@@ -368,8 +379,12 @@ class _SubjectGroups extends StatelessWidget {
                   Padding(
                     padding: const EdgeInsets.only(bottom: 4),
                     child: Text(
-                      '${s.subjectTitle}: ${s.accuracyPercent.round()}% '
-                      '(${s.correct}/${s.attempted}) · ${s.trend.label}',
+                      s.diagnosticPercent == null
+                          ? '${s.subjectTitle}: ${s.accuracyPercent.round()}% '
+                              '(${s.correct}/${s.attempted}) · ${s.trend.label}'
+                          : '${s.subjectTitle}: ${s.diagnosticPercent!.round()}% → '
+                              '${s.latestPercent.round()}% '
+                              '(${s.correct}/${s.attempted}) · ${s.band.label}',
                     ),
                   ),
             ],
@@ -400,11 +415,16 @@ class _TopicTile extends StatelessWidget {
       child: ListTile(
         title: Text(topic.label, style: const TextStyle(fontWeight: FontWeight.w700)),
         subtitle: Text(
-          '${topic.subjectTitle.isEmpty ? '' : '${topic.subjectTitle} · '}'
-          '${topic.accuracyPercent.round()}% · ${topic.attempted} attempts · '
-          'Correct ${topic.correct} / Wrong ${topic.wrong} · '
-          '${topic.band.label} · ${topic.trend.label}'
-          '${topic.syllabusStatus == null ? '' : ' · ${_statusMr(topic.syllabusStatus!)}'}',
+          topic.hasPerformance
+              ? '${topic.subjectTitle.isEmpty ? '' : '${topic.subjectTitle} · '}'
+                  'Overall ${topic.accuracyPercent.round()}% · '
+                  'Latest ${topic.latestPercent.round()}% · '
+                  'Best ${topic.bestPercent.round()}% · '
+                  '${topic.attempted} questions · '
+                  'Correct ${topic.correct} / Wrong ${topic.wrong} · '
+                  '${topic.band.label} · ${topic.trend.label}'
+                  '${topic.syllabusStatus == null ? '' : ' · ${_statusMr(topic.syllabusStatus!)}'}'
+              : 'Not enough data',
         ),
         trailing: _BandChip(band: topic.band),
       ),

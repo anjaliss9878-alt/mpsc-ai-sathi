@@ -26,12 +26,22 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $repoRoot
 
 if (-not (Test-Path $DefinesFile)) {
-  Write-Error "Missing $DefinesFile - copy dart_defines.json.example and fill keys."
+  Write-Error "Missing $DefinesFile - copy dart_defines.json.example and fill keys (local worker only)."
 }
 
 # Free RAM: stop leftover Flutter web sessions and Flutter-owned Chrome profiles.
+# Never kill the classroom worker on :8791 (local /ai/lesson + AI_API_KEY).
+$protectPids = @{}
+Get-NetTCPConnection -LocalPort 8791 -ErrorAction SilentlyContinue |
+  Select-Object -ExpandProperty OwningProcess -Unique |
+  ForEach-Object {
+    if ($_) { $protectPids[$_] = $true }
+  }
+
 Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
   Where-Object {
+    if ($protectPids.ContainsKey($_.ProcessId)) { return $false }
+    if ($_.CommandLine -match 'classroom_video_worker') { return $false }
     ($_.Name -match 'dart|flutter') -or
     ($_.Name -eq 'chrome.exe' -and $_.CommandLine -match 'flutter_tools_chrome|flutter_chrome_debug|remote-debugging-port')
   } |
@@ -59,15 +69,47 @@ if ($freeMb -lt 800) {
   Write-Warning "Low free RAM (<800 MB). Close Chrome/Edge tabs before continuing."
 }
 
+# Any-topic AI video needs the classroom worker (/ai/lesson, /ai/tts, /render).
+$workerHealthy = $false
+try {
+  $health = Invoke-WebRequest -Uri "http://127.0.0.1:8791/health" -UseBasicParsing -TimeoutSec 2
+  if ($health.StatusCode -eq 200 -and "$($health.Content)" -match '"ok"') {
+    $workerHealthy = $true
+  }
+} catch {}
+if (-not $workerHealthy) {
+  Write-Host "Starting classroom video worker on http://127.0.0.1:8791"
+  Start-Process -FilePath "powershell.exe" -WorkingDirectory $repoRoot -ArgumentList @(
+    "-NoProfile",
+    "-ExecutionPolicy", "Bypass",
+    "-File", (Join-Path $PSScriptRoot "run_classroom_video_backend.ps1")
+  ) -WindowStyle Minimized
+}
+
 Write-Host ""
 $url = 'http://' + $Hostname + ':' + $Port
 Write-Host "Starting Flutter web-server at $url"
 Write-Host 'Do NOT use: flutter run -d chrome  (DWDS WebkitDebugger.enable times out on 4GB)'
 Write-Host "Open the URL only after you see: is being served at $url"
+Write-Host "Flutter Web does not receive AI_API_KEY (worker on :8791 loads it separately)."
 Write-Host ""
 
-& $flutter run -d web-server -t $Target `
-  --dart-define-from-file=$DefinesFile `
-  --web-hostname=$Hostname `
-  --web-port=$Port `
-  --no-web-resources-cdn
+# Never pass dart_defines.json into Flutter: that file holds the Gemini
+# secret for the classroom worker only. Pass only non-secret model names.
+$flutterArgs = @(
+  'run', '-d', 'web-server', '-t', $Target,
+  "--web-hostname=$Hostname",
+  "--web-port=$Port",
+  '--no-web-resources-cdn'
+)
+try {
+  $definesJson = Get-Content -Raw -Path $DefinesFile | ConvertFrom-Json
+  $model = [string]$definesJson.AI_MODEL
+  if (-not [string]::IsNullOrWhiteSpace($model)) {
+    $flutterArgs += "--dart-define=AI_MODEL=$model"
+  }
+} catch {
+  Write-Warning "Could not read AI_MODEL from $DefinesFile (Flutter Web will use code defaults)."
+}
+
+& $flutter @flutterArgs

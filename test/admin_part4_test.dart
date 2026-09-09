@@ -271,6 +271,7 @@ void main() {
     final rules = File('firestore.rules').readAsStringSync();
     for (final path in [
       'match /testAttempts/{attemptId}',
+      'match /diagnosticAttempts/{attemptId}',
       'match /studyPlans/{planId}',
       'match /syllabusProgress/{topicId}',
       'match /classroomProgress/{chapterId}',

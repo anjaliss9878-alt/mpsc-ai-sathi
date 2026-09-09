@@ -1,7 +1,9 @@
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:mpsc_combine_ai/firebase_options.dart';
+import 'package:mpsc_combine_ai/theme/app_brand.dart';
 import 'package:mpsc_combine_ai/theme/app_colors.dart';
+import 'package:mpsc_combine_ai/widgets/app_brand_logo.dart';
 
 /// Initializes Firebase exactly once before showing [child].
 ///
@@ -32,7 +34,8 @@ class _FirebaseInitializerState extends State<FirebaseInitializer> {
         if (snapshot.connectionState != ConnectionState.done) {
           return const _StatusScaffold(
             icon: Icons.school_rounded,
-            title: 'MPSC COMBINE AI',
+            showBrandLogo: true,
+            title: kAppName,
             message: 'लोड होत आहे…',
             showSpinner: true,
           );
@@ -61,12 +64,14 @@ class _StatusScaffold extends StatelessWidget {
     required this.title,
     required this.message,
     required this.showSpinner,
+    this.showBrandLogo = false,
   });
 
   final IconData icon;
   final String title;
   final String message;
   final bool showSpinner;
+  final bool showBrandLogo;
 
   @override
   Widget build(BuildContext context) {
@@ -79,11 +84,14 @@ class _StatusScaffold extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(
-                  icon,
-                  size: 56,
-                  color: AppColors.navy.withValues(alpha: 0.6),
-                ),
+                if (showBrandLogo)
+                  const AppBrandLogo(size: 96, borderRadius: 22)
+                else
+                  Icon(
+                    icon,
+                    size: 56,
+                    color: AppColors.navy.withValues(alpha: 0.6),
+                  ),
                 const SizedBox(height: 16),
                 Text(
                   title,

@@ -1,21 +1,11 @@
 const { json } = require('../lib/cors');
 const { withAuth } = require('../lib/auth');
 
-const VOICES = {
-  polity: 'pNInz6obpgDQGcFmaJgB',
-  history: '2EiwWnXFnvU5JabPnv8n',
-  geography: 'ThT5KcBeYPX3keUQqHPh',
-  economics: 'ErXwobaYiN019PkySvjV',
-  science: '21m00Tcm4TlvDq8ikWAM',
-  environment: 'ThT5KcBeYPX3keUQqHPh',
-};
-
 const GEMINI_TTS_MODEL = 'gemini-3.1-flash-tts-preview';
 const GEMINI_VOICE = 'Kore';
 
 function safeSnippet(text) {
   return `${text || ''}`
-    .replace(/xi-api-key\s*[:=]\s*\S+/gi, '')
     .replace(/sk_[A-Za-z0-9]+/g, '[redacted]')
     .replace(/\s+/g, ' ')
     .trim()
@@ -59,6 +49,20 @@ function chunkSpeech(text, maxChars) {
   return chunks;
 }
 
+function isWavContainer(buf) {
+  return (
+    buf &&
+    buf.length >= 12 &&
+    buf.toString('ascii', 0, 4) === 'RIFF' &&
+    buf.toString('ascii', 8, 12) === 'WAVE'
+  );
+}
+
+function ensureWav(buf, mime) {
+  if (isWavContainer(buf)) return buf;
+  return pcm16ToWav(buf, parseRate(mime) || 24000);
+}
+
 function pcm16ToWav(pcm, sampleRate) {
   const dataLength = pcm.length;
   const byteRate = sampleRate * 2;
@@ -99,6 +103,54 @@ function parseRate(mime) {
   return m ? Number(m[1]) : 24000;
 }
 
+function isTransientStatus(status) {
+  return status === 429 || status === 500 || status === 502 ||
+    status === 503 || status === 504;
+}
+
+async function fetchGeminiAudio(body, apiKey) {
+  let lastError;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 55000);
+    try {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TTS_MODEL}:generateContent`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': apiKey,
+          },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        },
+      );
+      const rawText = await res.text();
+      if (res.ok) return rawText;
+      const err = new Error(
+        `Gemini TTS failed HTTP ${res.status}: ${safeSnippet(rawText)}`,
+      );
+      err.statusCode = res.status === 429 ? 429 : 502;
+      lastError = err;
+      if (!isTransientStatus(res.status) || attempt === 2) throw err;
+    } catch (e) {
+      lastError = e;
+      if (attempt === 2 || (e.statusCode && e.statusCode !== 429 &&
+          e.statusCode !== 502 && e.statusCode !== 503 &&
+          e.statusCode !== 504)) {
+        throw e;
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+    await new Promise((resolve) =>
+      setTimeout(resolve, 700 * (2 ** attempt)),
+    );
+  }
+  throw lastError || new Error('Gemini TTS unavailable');
+}
+
 async function geminiSpeech(text, apiKey) {
   const clipped = clipAtSentence(text, 1800);
   const chunks = chunkSpeech(clipped, 900);
@@ -109,65 +161,54 @@ async function geminiSpeech(text, apiKey) {
   }
   const wavs = [];
   for (const chunk of chunks) {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TTS_MODEL}:generateContent`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': apiKey,
-        },
-        body: JSON.stringify({
-          contents: [
+    const rawText = await fetchGeminiAudio({
+      contents: [
+        {
+          role: 'user',
+          parts: [
             {
-              role: 'user',
-              parts: [
-                {
-                  text:
-                    'Speak in natural Marathi as a warm female MPSC faculty. ' +
-                    `Do not add extra words. Read exactly:\n${chunk}`,
-                },
-              ],
+              text:
+                'Speak in natural Marathi as a warm female MPSC faculty. ' +
+                `Do not add extra words. Read exactly:\n${chunk}`,
             },
           ],
-          generationConfig: {
-            responseModalities: ['AUDIO'],
-            speechConfig: {
-              voiceConfig: {
-                prebuiltVoiceConfig: { voiceName: GEMINI_VOICE },
-              },
-            },
+        },
+      ],
+      generationConfig: {
+        responseModalities: ['AUDIO'],
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: { voiceName: GEMINI_VOICE },
           },
-        }),
+        },
       },
-    );
-    const raw = await res.text();
-    if (!res.ok) {
-      throw new Error(
-        `Gemini TTS failed HTTP ${res.status}: ${safeSnippet(raw)}`,
-      );
-    }
-    const decoded = JSON.parse(raw);
+    }, apiKey);
+    const decoded = JSON.parse(rawText);
     const parts = decoded?.candidates?.[0]?.content?.parts;
     const inline = parts?.[0]?.inlineData || parts?.[0]?.inline_data;
     const b64 = `${inline?.data || ''}`.trim();
     if (!b64) {
-      throw new Error('Gemini TTS empty audio payload');
+      const err = new Error('Gemini TTS empty audio payload');
+      err.statusCode = 502;
+      throw err;
     }
-    const pcm = Buffer.from(b64, 'base64');
-    if (pcm.length < 256) {
-      throw new Error('Gemini TTS returned empty audio');
+    const audioBuf = Buffer.from(b64, 'base64');
+    if (audioBuf.length < 256 && !isWavContainer(audioBuf)) {
+      const err = new Error('Gemini TTS returned empty audio');
+      err.statusCode = 502;
+      throw err;
     }
-    const rate = parseRate(inline?.mimeType || inline?.mime_type);
-    wavs.push(pcm16ToWav(pcm, rate || 24000));
+    const mime = inline?.mimeType || inline?.mime_type || '';
+    wavs.push(ensureWav(audioBuf, mime));
   }
   const bytes = concatWav(wavs);
   return {
     audio_base64: bytes.toString('base64'),
     mimeType: 'audio/wav',
+    mime_type: 'audio/wav',
     durationMs: Math.min(12 * 60 * 1000, wavDurationMs(bytes)),
     voiceId: GEMINI_VOICE,
-    modelId: 'gemini-tts',
+    modelId: GEMINI_TTS_MODEL,
   };
 }
 
@@ -185,76 +226,10 @@ exports.handler = async (event) => {
     if (!text) {
       return json(400, { error: 'Empty lesson script', status: 400 }, event);
     }
-    const elevenKey = `${process.env.ELEVENLABS_API_KEY || ''}`.trim();
-    if (elevenKey) {
-      const subject = `${map.subject || 'geography'}`.trim().toLowerCase();
-      const voiceId = (
-        `${map.voiceId || process.env.ELEVENLABS_VOICE_ID || ''}`.trim() ||
-        VOICES[subject] ||
-        VOICES.geography
-      );
-      const model = (
-        `${map.modelId || process.env.ELEVENLABS_MODEL_ID || process.env.ELEVENLABS_MODEL || ''}`.trim() ||
-        'eleven_multilingual_v2'
-      );
-      const res = await fetch(
-        `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/with-timestamps`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'xi-api-key': elevenKey,
-            Accept: 'application/json',
-          },
-          body: JSON.stringify({
-            text,
-            model_id: model,
-          }),
-        },
-      );
-      const raw = await res.text();
-      if (res.status < 200 || res.status >= 300) {
-        const status =
-          res.status === 429
-            ? 429
-            : res.status === 401 || res.status === 403
-              ? res.status
-              : 502;
-        return json(status, {
-          error: `ElevenLabs TTS failed (HTTP ${res.status}). ${safeSnippet(raw)}`,
-          status: res.status,
-        }, event);
-      }
-      const decoded = JSON.parse(raw);
-      const audio = `${decoded.audio_base64 || ''}`.trim();
-      if (!audio) {
-        return json(502, {
-          error: 'ElevenLabs returned empty audio',
-          status: 502,
-        }, event);
-      }
-      const alignment =
-        decoded.normalized_alignment || decoded.alignment || {};
-      const ends = Array.isArray(alignment.character_end_times_seconds)
-        ? alignment.character_end_times_seconds
-        : [];
-      const durationMs =
-        ends.length > 0
-          ? Math.round(Number(ends[ends.length - 1]) * 1000)
-          : Math.max(800, Math.round((text.length / 13) * 1000));
-      return json(200, {
-        audio_base64: audio,
-        mimeType: 'audio/mpeg',
-        voiceId,
-        modelId: model,
-        durationMs,
-      }, event);
-    }
-
     const geminiKey = `${process.env.AI_API_KEY || ''}`.trim();
     if (!geminiKey) {
       return json(500, {
-        error: 'Marathi TTS credentials missing',
+        error: 'Gemini TTS credentials missing',
         status: 500,
       }, event);
     }
@@ -269,8 +244,12 @@ exports.handler = async (event) => {
   } catch (e) {
     const status = e.statusCode || 502;
     return json(status, {
-      error: e.publicMessage || e.message || 'TTS failed',
+      error: e.publicMessage || e.message || 'Gemini TTS failed',
       status,
     }, event);
   }
 };
+
+exports.GEMINI_TTS_MODEL = GEMINI_TTS_MODEL;
+exports.isWavContainer = isWavContainer;
+exports.ensureWav = ensureWav;

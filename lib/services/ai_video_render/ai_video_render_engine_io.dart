@@ -11,31 +11,31 @@ import 'package:mpsc_combine_ai/services/ai_video_render/educational_slide_paint
 import 'package:mpsc_combine_ai/services/ai_video_render/ffmpeg_encoder_io.dart';
 import 'package:mpsc_combine_ai/services/ai_video_render/lesson_render_job_builder.dart';
 import 'package:mpsc_combine_ai/services/ai_video_render/render_models.dart';
-import 'package:mpsc_combine_ai/services/elevenlabs_tts_service.dart';
+import 'package:mpsc_combine_ai/services/ai_tts_service.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
-/// Production AI video engine: educational slides + ElevenLabs TTS + FFmpeg → MP4.
+/// Production AI video engine: educational slides + Gemini TTS + FFmpeg → MP4.
 ///
 /// Landscape 1280×720 @ 30 FPS. Low RAM via few keyframes + timed concat encode.
 class AiVideoRenderEngine {
   AiVideoRenderEngine({
-    ElevenLabsTtsService? elevenLabs,
+    AiTtsService? tts,
     FfmpegVideoEncoder? encoder,
     LessonCacheService? cache,
     Directory? videosDirectory,
     Directory? workRootDirectory,
     http.Client? httpClient,
-  })  : _eleven = elevenLabs ??
+  })  : _tts = tts ??
             (httpClient != null
-                ? ElevenLabsTtsService(client: httpClient)
-                : elevenLabsTtsService),
+                ? AiTtsService(client: httpClient)
+                : aiTtsService),
         _encoder = encoder ?? FfmpegVideoEncoder(),
         _cache = cache ?? lessonCacheService,
         _videosDirectoryOverride = videosDirectory,
         _workRootDirectoryOverride = workRootDirectory;
 
-  final ElevenLabsTtsService _eleven;
+  final AiTtsService _tts;
   final FfmpegVideoEncoder _encoder;
   final LessonCacheService _cache;
   final Directory? _videosDirectoryOverride;
@@ -142,12 +142,6 @@ class AiVideoRenderEngine {
         'FFmpeg not available. Install to .tools/ffmpeg/ffmpeg.exe',
       );
     }
-    if (!_eleven.isConfigured) {
-      throw StateError(
-        'ElevenLabs API key missing. Set ELEVENLABS_API_KEY in dart_defines.json.',
-      );
-    }
-
     phase(AiVideoRenderPhase.scripting, 0.05);
     final key = _cacheKeyFor(job);
     final work = await _workDir(key);
@@ -209,7 +203,7 @@ class AiVideoRenderEngine {
     if (lines.isEmpty) {
       throw StateError('No TTS narration was prepared');
     }
-    return FullLessonNarrationService(elevenLabs: _eleven).synthesize(
+    return FullLessonNarrationService(tts: _tts).synthesize(
       scriptLines: lines,
       topic: job.topicName,
       subject: detectMpscTeachingSubject(

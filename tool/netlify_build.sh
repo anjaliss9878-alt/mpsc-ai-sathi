@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Netlify build: Flutter web student app.
-# Does NOT pass AI_API_KEY / ELEVENLABS_API_KEY / VERTEX_* into dart-define
+# Does NOT pass AI_API_KEY / VERTEX_* into dart-define
 # (those belong on Netlify Functions only).
 set -euo pipefail
 
@@ -24,9 +24,6 @@ flutter pub get
 DEFINES=()
 if [ -n "${AI_MODEL:-}" ]; then
   DEFINES+=(--dart-define="AI_MODEL=${AI_MODEL}")
-fi
-if [ -n "${ELEVENLABS_MODEL:-}" ]; then
-  DEFINES+=(--dart-define="ELEVENLABS_MODEL=${ELEVENLABS_MODEL}")
 fi
 
 flutter build web \

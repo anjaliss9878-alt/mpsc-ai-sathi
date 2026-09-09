@@ -7,6 +7,9 @@ import 'package:mpsc_combine_ai/models/exam_item.dart';
 import 'package:mpsc_combine_ai/models/note_item.dart';
 import 'package:mpsc_combine_ai/models/pdf_content_block.dart';
 import 'package:mpsc_combine_ai/models/subject_item.dart';
+import 'package:mpsc_combine_ai/data/mpsc_group_b_structure.dart';
+import 'package:mpsc_combine_ai/data/mpsc_group_b_chapters.dart';
+import 'package:mpsc_combine_ai/data/student_curriculum.dart';
 import 'package:mpsc_combine_ai/utils/firestore_payload.dart';
 import 'package:mpsc_combine_ai/utils/json_list.dart';
 
@@ -47,11 +50,11 @@ class NotesRepository {
               .map((d) => ExamItem.fromMap(d.data(), d.id))
               .toList()
             ..sort((a, b) => a.order.compareTo(b.order));
-          controller.add(exams.isEmpty ? [ExamItem.mpscCombine()] : exams);
+          controller.add(exams.isEmpty ? [ExamItem.groupBCombined()] : exams);
         },
         onError: (Object error, StackTrace stack) {
           if (error is FirebaseException && error.code == 'permission-denied') {
-            controller.add([ExamItem.mpscCombine()]);
+            controller.add([ExamItem.groupBCombined()]);
           } else {
             controller.addError(error, stack);
           }
@@ -63,7 +66,7 @@ class NotesRepository {
   }
 
   /// Reads `exams`. If the collection list is denied (stale deployed rules
-  /// without `match /exams/{examId}`), falls back to the single MPSC Combine
+  /// without `match /exams/{examId}`), falls back to the Group B Combined
   /// exam so Notes / Content Index still load.
   Future<List<ExamItem>> getExamsOnce() async {
     try {
@@ -81,16 +84,120 @@ class NotesRepository {
 
   Future<ExamItem> ensureDefaultExam() async {
     final exam = ExamItem.mpscCombine();
+    var result = exam;
     try {
       final snap = await _examsRef.doc(kDefaultExamId).get();
       if (snap.exists && snap.data() != null) {
-        return ExamItem.fromMap(snap.data()!, snap.id);
+        result = ExamItem.fromMap(snap.data()!, snap.id);
+      } else {
+        await _examsRef.doc(exam.id).set(exam.toMap(), SetOptions(merge: true));
       }
-      await _examsRef.doc(exam.id).set(exam.toMap(), SetOptions(merge: true));
     } on FirebaseException catch (e) {
       if (e.code != 'permission-denied') rethrow;
     }
+    await ensureMpscGroupBCombinedStructure();
+    return result;
+  }
+
+  /// Exam + subject + grouping-chapter level (no topics). Idempotent by id.
+  Future<ExamItem> ensureMpscGroupBCombinedStructure() async {
+    final exam = ExamItem.groupBCombined();
+    try {
+      await _examsRef.doc(exam.id).set(exam.toMap(), SetOptions(merge: true));
+      for (final subject in mpscGroupBCombinedSubjects()) {
+        await upsertSubjectById(subject);
+      }
+      for (final chapter in mpscGroupBCombinedChapters()) {
+        await upsertChapterById(chapter);
+      }
+    } on FirebaseException catch (e) {
+      if (e.code != 'permission-denied') rethrow;
+    }
+    final snap = await _examsRef.doc(exam.id).get();
+    if (snap.exists && snap.data() != null) {
+      return ExamItem.fromMap(snap.data()!, snap.id);
+    }
     return exam;
+  }
+
+  Future<String> upsertSubjectById(SubjectItem subject) async {
+    if (subject.id.isEmpty) return addSubject(subject);
+    final snap = await _subjectsRef.doc(subject.id).get();
+    if (!snap.exists || snap.data() == null) {
+      final data = subject.toMap();
+      data['published'] = subject.published;
+      data['order'] = subject.order;
+      await _subjectsRef.doc(subject.id).set(data, SetOptions(merge: true));
+      return subject.id;
+    }
+    final existing = SubjectItem.fromMap(snap.data()!, snap.id);
+    await updateSubject(
+      SubjectItem(
+        id: existing.id,
+        title: subject.title,
+        subtitle: subject.subtitle,
+        iconName: subject.iconName,
+        order: subject.order,
+        imageUrl:
+            subject.imageUrl.isNotEmpty ? subject.imageUrl : existing.imageUrl,
+        slug: subject.slug,
+        nameEn: subject.nameEn,
+        examId: subject.examId,
+        stageId: subject.stageId,
+        paperId: subject.paperId,
+        published: subject.published,
+      ),
+    );
+    return existing.id;
+  }
+
+  Future<String> upsertChapterById(ChapterItem chapter) async {
+    if (chapter.id.isEmpty) return upsertChapterBySlug(chapter);
+    final snap = await _chaptersRef.doc(chapter.id).get();
+    if (!snap.exists || snap.data() == null) {
+      await _chaptersRef
+          .doc(chapter.id)
+          .set(chapter.toMap(), SetOptions(merge: true));
+      return chapter.id;
+    }
+    final existing = ChapterItem.fromMap(snap.data()!, snap.id);
+    await updateChapter(
+      ChapterItem(
+        id: existing.id,
+        subjectId: chapter.subjectId,
+        title: chapter.title,
+        order: chapter.order,
+        estimatedStudyMinutes: chapter.estimatedStudyMinutes > 0
+            ? chapter.estimatedStudyMinutes
+            : existing.estimatedStudyMinutes,
+        description: chapter.description.isNotEmpty
+            ? chapter.description
+            : existing.description,
+        slug: chapter.slug,
+        titleEn: chapter.titleEn.isNotEmpty ? chapter.titleEn : existing.titleEn,
+        examId: chapter.examId.isNotEmpty ? chapter.examId : existing.examId,
+        parentChapterId: existing.parentChapterId.isNotEmpty
+            ? existing.parentChapterId
+            : chapter.parentChapterId,
+        nodeType:
+            chapter.nodeType.isNotEmpty ? chapter.nodeType : existing.nodeType,
+        published: chapter.published,
+        tags: chapter.tags.isNotEmpty ? chapter.tags : existing.tags,
+        thumbnailUrl: existing.thumbnailUrl.isNotEmpty
+            ? existing.thumbnailUrl
+            : chapter.thumbnailUrl,
+        pdfUrl: existing.pdfUrl.isNotEmpty ? existing.pdfUrl : chapter.pdfUrl,
+        aiSummary:
+            existing.aiSummary.isNotEmpty ? existing.aiSummary : chapter.aiSummary,
+        revisionNotes: existing.revisionNotes.isNotEmpty
+            ? existing.revisionNotes
+            : chapter.revisionNotes,
+        classroomLessonId: existing.classroomLessonId.isNotEmpty
+            ? existing.classroomLessonId
+            : chapter.classroomLessonId,
+      ),
+    );
+    return existing.id;
   }
 
   Future<String> addExam(ExamItem exam) async {
@@ -120,6 +227,8 @@ class NotesRepository {
   }
 
   /// Student: published subjects only from the same `subjects` collection.
+  /// When [examId] is non-empty, only published subjects belonging to that exam
+  /// are returned. When omitted or empty, all published subjects are returned.
   ///
   /// Strategy (works with both current and legacy deployed rules):
   /// 1. Prefer a full-collection listen + client `published` filter — this
@@ -127,10 +236,18 @@ class NotesRepository {
   /// 2. If that listen is denied (legacy rules gating list queries on
   ///    `published == true`), fall back to an equality query that satisfies
   ///    those rules. Admin writes always set `published` as a bool.
-  Stream<List<SubjectItem>> watchPublishedSubjects() {
+  Stream<List<SubjectItem>> watchPublishedSubjects({
+    String? examId,
+  }) {
     return Stream.multi((controller) {
       StreamSubscription<List<SubjectItem>>? sub;
       var usingFallback = false;
+
+      bool filterSubject(SubjectItem s) {
+        if (!s.published) return false;
+        if (examId == null || examId.isEmpty) return true;
+        return subjectBelongsToExam(s, examId);
+      }
 
       void listenFallback() {
         usingFallback = true;
@@ -139,14 +256,14 @@ class NotesRepository {
             .snapshots()
             .map(_mapSubjectsSnapshot)
             .listen(
-              controller.add,
+              (all) => controller.add(all.where(filterSubject).toList()),
               onError: controller.addError,
               onDone: controller.close,
             );
       }
 
       sub = watchSubjects().listen(
-        (all) => controller.add(all.where((s) => s.published).toList()),
+        (all) => controller.add(all.where(filterSubject).toList()),
         onError: (Object error, StackTrace stackTrace) {
           if (usingFallback) {
             controller.addError(error, stackTrace);
@@ -176,13 +293,16 @@ class NotesRepository {
     return subjects;
   }
 
-  Future<List<SubjectItem>> getSubjectsOnce() async {
+  Future<List<SubjectItem>> getSubjectsOnce({
+    String? examId,
+  }) async {
     final snap = await _subjectsRef.get();
     final subjects = snap.docs
         .map((d) => SubjectItem.fromMap(d.data(), d.id))
         .toList()
       ..sort((a, b) => a.order.compareTo(b.order));
-    return subjects;
+    if (examId == null || examId.isEmpty) return subjects;
+    return subjects.where((s) => subjectBelongsToExam(s, examId)).toList();
   }
 
   Future<SubjectItem?> findSubjectBySlug(String slug) async {
@@ -238,6 +358,8 @@ class NotesRepository {
         slug: subject.slug,
         nameEn: subject.nameEn,
         examId: subject.examId.isNotEmpty ? subject.examId : existing.examId,
+        stageId: subject.stageId.isNotEmpty ? subject.stageId : existing.stageId,
+        paperId: subject.paperId.isNotEmpty ? subject.paperId : existing.paperId,
         published: subject.published,
       ),
     );
@@ -277,12 +399,12 @@ class NotesRepository {
     );
   }
 
-  /// Student: published leaf nodes only (legacy chapters + topics).
-  /// Grouping `nodeType=chapter` rows stay in Admin and are hidden here.
+  /// Student curriculum rows for a subject (`subjectId` equality query).
+  ///
+  /// Published topics stay first when they exist. If the subject only has
+  /// grouping `nodeType=chapter` documents (Group B Phase 2), those are shown.
   Stream<List<ChapterItem>> watchPublishedChapters(String subjectId) {
-    return watchChapters(subjectId).map(
-      (all) => all.where((c) => c.isStudentLeaf).toList(),
-    );
+    return watchChapters(subjectId).map(selectStudentCurriculumChapters);
   }
 
   /// Admin: root chapters for a subject (`parentChapterId` empty).
@@ -451,9 +573,54 @@ class NotesRepository {
   }
 
   Stream<List<NoteItem>> watchPublishedNotes() {
-    return watchAllNotes().map(
-      (all) => all.where((n) => n.isStudentVisible).toList(),
-    );
+    return _watchStudentVisibleNotes((all) => all);
+  }
+
+  Stream<List<NoteItem>> _watchStudentVisibleNotes(
+    List<NoteItem> Function(List<NoteItem> visible) then,
+  ) {
+    return Stream.multi((controller) {
+      StreamSubscription<List<NoteItem>>? sub;
+      var usingFallback = false;
+
+      List<NoteItem> visible(List<NoteItem> all) =>
+          then(all.where((n) => n.isStudentVisible).toList());
+
+      void listenPublished({required bool requirePublishedStatus}) {
+        Query<Map<String, dynamic>> query =
+            _notesRef.where('published', isEqualTo: true);
+        if (requirePublishedStatus) {
+          query = query.where('status', isEqualTo: 'published');
+        }
+        sub = query
+            .snapshots()
+            .map(
+              (snap) => visible(
+                snap.docs.map((d) => NoteItem.fromMap(d.data(), d.id)).toList(),
+              ),
+            )
+            .listen(
+              controller.add,
+              onError: (Object error, StackTrace stackTrace) {
+                if (!usingFallback &&
+                    !requirePublishedStatus &&
+                    _isPermissionDenied(error)) {
+                  usingFallback = true;
+                  sub?.cancel();
+                  listenPublished(requirePublishedStatus: true);
+                  return;
+                }
+                controller.addError(error, stackTrace);
+              },
+              onDone: controller.close,
+            );
+      }
+
+      listenPublished(requirePublishedStatus: false);
+      controller.onCancel = () async {
+        await sub?.cancel();
+      };
+    });
   }
 
   Future<SubjectItem?> getSubject(String subjectId) async {
@@ -474,18 +641,23 @@ class NotesRepository {
 
   /// Student-facing note stream — hides unpublished / draft notes.
   Stream<NoteItem?> watchPublishedNoteForChapter(String chapterId) {
-    return watchNoteForChapter(chapterId).map((note) {
-      if (note == null) return null;
-      return note.isStudentVisible ? note : null;
-    });
+    return _watchStudentVisibleNotes((visible) {
+      final note = _pickNoteForNode(visible, chapterId);
+      return note == null ? const <NoteItem>[] : [note];
+    }).map((list) => list.isEmpty ? null : list.first);
   }
 
   Future<NoteItem?> getNoteForChapter(String chapterId) async {
-    final all = await _notesRef.get();
-    final notes = all.docs
-        .map((d) => NoteItem.fromMap(d.data(), d.id))
-        .toList();
-    return _pickNoteForNode(notes, chapterId);
+    try {
+      final all = await _notesRef.get();
+      final notes = all.docs
+          .map((d) => NoteItem.fromMap(d.data(), d.id))
+          .toList();
+      return _pickNoteForNode(notes, chapterId);
+    } catch (error) {
+      if (!_isPermissionDenied(error)) rethrow;
+      return _pickNoteForNode(await _studentPublishedNotesOnce(), chapterId);
+    }
   }
 
   Future<NoteItem?> getNote(String noteId) async {
@@ -497,12 +669,40 @@ class NotesRepository {
 
   Future<List<NoteItem>> getNotesForTopicOnce(String topicId) async {
     if (topicId.isEmpty) return const [];
-    final all = await _notesRef.get();
-    return [
-      for (final d in all.docs)
-        if (_noteMatchesNode(NoteItem.fromMap(d.data(), d.id), topicId))
-          NoteItem.fromMap(d.data(), d.id),
-    ];
+    try {
+      final all = await _notesRef.get();
+      return [
+        for (final d in all.docs)
+          if (_noteMatchesNode(NoteItem.fromMap(d.data(), d.id), topicId))
+            NoteItem.fromMap(d.data(), d.id),
+      ];
+    } catch (error) {
+      if (!_isPermissionDenied(error)) rethrow;
+      return [
+        for (final n in await _studentPublishedNotesOnce())
+          if (_noteMatchesNode(n, topicId)) n,
+      ];
+    }
+  }
+
+  Future<List<NoteItem>> _studentPublishedNotesOnce() async {
+    try {
+      final snap = await _notesRef.where('published', isEqualTo: true).get();
+      return snap.docs
+          .map((d) => NoteItem.fromMap(d.data(), d.id))
+          .where((n) => n.isStudentVisible)
+          .toList();
+    } catch (error) {
+      if (!_isPermissionDenied(error)) rethrow;
+      final snap = await _notesRef
+          .where('published', isEqualTo: true)
+          .where('status', isEqualTo: 'published')
+          .get();
+      return snap.docs
+          .map((d) => NoteItem.fromMap(d.data(), d.id))
+          .where((n) => n.isStudentVisible)
+          .toList();
+    }
   }
 
   NoteItem? _pickNoteForNode(List<NoteItem> all, String nodeId) {
@@ -526,6 +726,13 @@ class NotesRepository {
     return note.topicId == nodeId ||
         note.chapterId == nodeId ||
         note.subTopicId == nodeId;
+  }
+
+  bool _isPermissionDenied(Object error) {
+    if (error is FirebaseException) {
+      return error.code == 'permission-denied';
+    }
+    return error.toString().contains('permission-denied');
   }
 
   /// Creates or updates the note document for [chapterId].
@@ -576,9 +783,15 @@ class NotesRepository {
       'updatedAt': DateTime.now().toIso8601String(),
     };
     if (examId != null) {
-      data['examId'] = examId.isEmpty ? kDefaultExamId : examId;
+      data['examId'] = resolvedContentExamId(
+        examId: examId,
+        subjectId: subjectId,
+      );
     } else if (isCreate) {
-      data['examId'] = kDefaultExamId;
+      data['examId'] = resolvedContentExamId(
+        examId: '',
+        subjectId: subjectId,
+      );
     }
     if (topicId != null) {
       data['topicId'] = topicId;

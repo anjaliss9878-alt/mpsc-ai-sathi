@@ -3,7 +3,6 @@ import 'dart:math' as math;
 
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mpsc_combine_ai/models/content_index.dart';
 import 'package:mpsc_combine_ai/models/exam_item.dart';
 import 'package:mpsc_combine_ai/models/rag_chunk.dart';
 import 'package:mpsc_combine_ai/models/rag_source.dart';
@@ -47,6 +46,31 @@ bool studentCanReadChunk({
   final sourceId = chunk['sourceId'];
   if (sourceId is! String || sourceId.isEmpty || source == null) return false;
   return source['published'] == true && source['status'] == 'Ready';
+}
+
+/// Mirrors firestore.rules `isStudentReadableWorkflowDoc`.
+bool studentCanReadWorkflowDoc({
+  required bool signedIn,
+  required bool admin,
+  required Map<String, dynamic> data,
+}) {
+  if (admin) return true;
+  if (!signedIn) return false;
+  if (data.containsKey('published') && data['published'] != true) return false;
+  if (data.containsKey('status') && data['status'] != 'published') return false;
+  return true;
+}
+
+/// Mirrors firestore.rules `isStudentReadablePublishedDoc` (jobAlerts).
+bool studentCanReadPublishedDoc({
+  required bool signedIn,
+  required bool admin,
+  required Map<String, dynamic> data,
+}) {
+  if (admin) return true;
+  if (!signedIn) return false;
+  if (data.containsKey('published') && data['published'] != true) return false;
+  return true;
 }
 
 /// A `where published == true` list fails closed if any matching doc is denied.
@@ -134,6 +158,213 @@ void main() {
     expect(rules, contains("resource.data.status == 'Ready'"));
     expect(rules, contains('resource.data.published == true'));
     expect(rules, contains('get(ragSourcePath(resource.data.sourceId)).data.status == \'Ready\''));
+  });
+
+  test('workflow collections deny student reads of draft docs', () {
+    expect(rules, contains('function isStudentReadableWorkflowDoc()'));
+    expect(rules, contains("resource.data.status == 'published'"));
+    expect(
+      File('lib/services/notes_repository.dart').readAsStringSync(),
+      contains("listenPublished(requirePublishedStatus: false)"),
+    );
+    expect(
+      File('lib/services/mcq_repository.dart').readAsStringSync(),
+      contains("listenPublished(requirePublishedStatus: false)"),
+    );
+    expect(
+      File('lib/services/pyq_repository.dart').readAsStringSync(),
+      contains("listenPublished(requirePublishedStatus: false)"),
+    );
+    expect(
+      File('lib/services/flashcard_repository.dart').readAsStringSync(),
+      contains("listenPublished(requirePublishedStatus: false)"),
+    );
+    expect(
+      File('lib/services/smart_trick_repository.dart').readAsStringSync(),
+      contains("listenPublished(requirePublishedStatus: false)"),
+    );
+    expect(
+      File('lib/services/current_affairs_repository.dart').readAsStringSync(),
+      contains("listenPublished(requirePublishedStatus: false)"),
+    );
+    expect(
+      File('lib/services/test_repository.dart').readAsStringSync(),
+      contains("listenPublished(requirePublishedStatus: false)"),
+    );
+    expect(
+      File('lib/services/ai_teacher_content_repository.dart').readAsStringSync(),
+      contains("listenPublished(requirePublishedStatus: false)"),
+    );
+    expect(
+      File('lib/services/ai_teacher_content_repository.dart').readAsStringSync(),
+      contains("where('published', isEqualTo: true)"),
+    );
+    expect(
+      File('lib/services/ai_teacher_content_repository.dart').readAsStringSync(),
+      isNot(contains('_ref.get()')),
+    );
+    expect(
+      File('lib/services/job_alerts_repository.dart').readAsStringSync(),
+      contains("where('published', isEqualTo: true)"),
+    );
+    expect(
+      File('lib/services/job_alerts_repository.dart').readAsStringSync(),
+      isNot(contains("where('status'")),
+    );
+    for (final path in [
+      'lib/services/flashcard_repository.dart',
+      'lib/services/smart_trick_repository.dart',
+      'lib/services/current_affairs_repository.dart',
+      'lib/services/test_repository.dart',
+      'lib/services/ai_teacher_content_repository.dart',
+      'lib/services/job_alerts_repository.dart',
+    ]) {
+      final src = File(path).readAsStringSync();
+      expect(
+        src,
+        isNot(contains('return watchAll().map')),
+        reason: '$path student reads must not list the full collection',
+      );
+    }
+    for (final matchLine in [
+      'match /notes/{noteId}',
+      'match /mcqs/{mcqId}',
+      'match /pyqs/{pyqId}',
+      'match /flashcards/{cardId}',
+      'match /smartTricks/{trickId}',
+      'match /tests/{testId}',
+      'match /currentAffairs/{itemId}',
+      'match /aiTeacherContent/{contentId}',
+    ]) {
+      final block = _ruleBlock(rules, matchLine);
+      expect(
+        block,
+        contains('allow read: if isAdmin() || isStudentReadableWorkflowDoc();'),
+        reason: matchLine,
+      );
+      expect(block, contains('allow write: if isAdmin();'), reason: matchLine);
+      expect(
+        block,
+        isNot(contains('allow read: if isSignedIn();')),
+        reason: matchLine,
+      );
+    }
+
+    const draft = {'published': false, 'status': 'draft'};
+    const review = {'published': false, 'status': 'underReview'};
+    const approved = {'published': false, 'status': 'approved'};
+    const unpublished = {'published': false, 'status': 'unpublished'};
+    const live = {'published': true, 'status': 'published'};
+    const legacy = <String, dynamic>{};
+
+    for (final hidden in [draft, review, approved, unpublished]) {
+      expect(
+        studentCanReadWorkflowDoc(signedIn: true, admin: false, data: hidden),
+        isFalse,
+      );
+      expect(
+        studentCanReadWorkflowDoc(signedIn: true, admin: true, data: hidden),
+        isTrue,
+      );
+    }
+    expect(
+      studentCanReadWorkflowDoc(signedIn: true, admin: false, data: live),
+      isTrue,
+    );
+    expect(
+      studentCanReadWorkflowDoc(signedIn: true, admin: false, data: legacy),
+      isTrue,
+    );
+    expect(
+      studentCanReadWorkflowDoc(
+        signedIn: true,
+        admin: false,
+        data: {'published': true, 'status': 'draft'},
+      ),
+      isFalse,
+    );
+    expect(
+      studentPublishedQueryAllowed([
+        studentCanReadWorkflowDoc(
+          signedIn: true,
+          admin: false,
+          data: live,
+        ),
+        studentCanReadWorkflowDoc(
+          signedIn: true,
+          admin: false,
+          data: {'published': true, 'status': 'draft'},
+        ),
+      ]),
+      isFalse,
+      reason: 'Student list of published==true must fail closed if any hit is a draft',
+    );
+  });
+
+  test('jobAlerts student read requires published only, never status', () {
+    expect(rules, contains('function isStudentReadablePublishedDoc()'));
+    final block = _ruleBlock(rules, 'match /jobAlerts/{alertId}');
+    expect(
+      block,
+      contains('allow read: if isAdmin() || isStudentReadablePublishedDoc();'),
+    );
+    expect(block, contains('allow write: if isAdmin();'));
+    expect(block, isNot(contains('allow read: if isSignedIn();')));
+    expect(block, isNot(contains("status == 'published'")));
+
+    expect(
+      studentCanReadPublishedDoc(
+        signedIn: true,
+        admin: false,
+        data: {'published': true, 'status': 'draft'},
+      ),
+      isTrue,
+    );
+    expect(
+      studentCanReadPublishedDoc(
+        signedIn: true,
+        admin: false,
+        data: {'published': false},
+      ),
+      isFalse,
+    );
+    expect(
+      studentCanReadPublishedDoc(
+        signedIn: true,
+        admin: false,
+        data: <String, dynamic>{},
+      ),
+      isTrue,
+    );
+    expect(
+      studentCanReadPublishedDoc(
+        signedIn: true,
+        admin: true,
+        data: {'published': false},
+      ),
+      isTrue,
+    );
+  });
+
+  test('videos liveClasses teachingSlides faculty RAG rules stay unchanged', () {
+    for (final matchLine in [
+      'match /videos/{videoId}',
+      'match /liveClasses/{classId}',
+      'match /teachingSlides/{deckId}',
+      'match /faculty/{facultyId}',
+    ]) {
+      final block = _ruleBlock(rules, matchLine);
+      expect(block, contains('allow read: if isSignedIn();'), reason: matchLine);
+      expect(block, contains('allow write: if isAdmin();'), reason: matchLine);
+    }
+    expect(
+      _ruleBlock(rules, 'match /ragSources/{sourceId}'),
+      contains('allow read: if isAdmin() || isStudentReadableRagSource();'),
+    );
+    expect(
+      _ruleBlock(rules, 'match /ragChunks/{chunkId}'),
+      contains('allow read: if isAdmin() || isStudentReadableRagChunk();'),
+    );
   });
 
   test('Draft → student cannot read source or chunk', () {
@@ -295,6 +526,9 @@ void main() {
     final attempts = _ruleBlock(rules, 'match /testAttempts/{attemptId}');
     expect(attempts, contains('allow read: if isOwner(uid) || isAdmin();'));
     expect(attempts, contains('allow write: if isOwner(uid);'));
+    final diagnostic = _ruleBlock(rules, 'match /diagnosticAttempts/{attemptId}');
+    expect(diagnostic, contains('allow read: if isOwner(uid) || isAdmin();'));
+    expect(diagnostic, contains('allow write: if isOwner(uid);'));
     final plans = _ruleBlock(rules, 'match /studyPlans/{planId}');
     expect(plans, contains('allow read: if isOwner(uid) || isAdmin();'));
     expect(plans, contains('allow write: if isOwner(uid);'));

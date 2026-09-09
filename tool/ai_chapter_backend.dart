@@ -238,83 +238,13 @@ Future<_TtsClip> _synthesizeSpeech({
   required Map<String, dynamic> map,
   required Map<String, dynamic> defines,
 }) async {
-  final elevenKey = '${defines['ELEVENLABS_API_KEY'] ?? ''}'.trim();
-  if (elevenKey.isNotEmpty) {
-    return _elevenLabsSpeech(text: text, map: map, defines: defines, apiKey: elevenKey);
-  }
-
   final geminiKey = '${defines['AI_API_KEY'] ?? ''}'.trim();
   if (geminiKey.isEmpty) {
     throw StateError(
-      'Marathi TTS credentials missing. Set AI_API_KEY or ELEVENLABS_API_KEY.',
+      'Gemini TTS credentials missing. Set AI_API_KEY.',
     );
   }
   return _geminiSpeech(text: text, apiKey: geminiKey);
-}
-
-Future<_TtsClip> _elevenLabsSpeech({
-  required String text,
-  required Map<String, dynamic> map,
-  required Map<String, dynamic> defines,
-  required String apiKey,
-}) async {
-  final subject = MpscTeachingSubjectX.tryParse('${map['subject'] ?? ''}') ??
-      MpscTeachingSubject.polity;
-  final voiceId = '${map['voiceId'] ?? defines['ELEVENLABS_VOICE_ID'] ?? ''}'
-          .trim()
-          .isNotEmpty
-      ? '${map['voiceId'] ?? defines['ELEVENLABS_VOICE_ID'] ?? ''}'.trim()
-      : subject.elevenLabsVoiceId;
-  final modelId =
-      '${map['modelId'] ?? defines['ELEVENLABS_MODEL_ID'] ?? defines['ELEVENLABS_MODEL'] ?? 'eleven_multilingual_v2'}'
-          .trim();
-  final uri = Uri.parse(
-    'https://api.elevenlabs.io/v1/text-to-speech/$voiceId/with-timestamps',
-  );
-  final res = await http
-      .post(
-        uri,
-        headers: {
-          'Content-Type': 'application/json',
-          'xi-api-key': apiKey,
-          'Accept': 'application/json',
-        },
-        body: jsonEncode({
-          'text': text,
-          'model_id': modelId.isEmpty ? 'eleven_multilingual_v2' : modelId,
-        }),
-      )
-      .timeout(const Duration(seconds: 180));
-  if (res.statusCode < 200 || res.statusCode >= 300) {
-    throw StateError('ElevenLabs TTS failed (HTTP ${res.statusCode})');
-  }
-  final decoded = jsonDecode(res.body);
-  if (decoded is! Map) {
-    throw StateError('ElevenLabs returned a non-JSON body');
-  }
-  final b64 = '${decoded['audio_base64'] ?? ''}'.trim();
-  if (b64.isEmpty) {
-    throw StateError('ElevenLabs returned empty audio');
-  }
-  final bytes = Uint8List.fromList(base64Decode(b64));
-  if (bytes.isEmpty) {
-    throw StateError('ElevenLabs returned empty audio');
-  }
-  final alignment = decoded['normalized_alignment'] ?? decoded['alignment'];
-  var durationMs = (text.length / 13 * 1000).round();
-  if (alignment is Map) {
-    final ends = alignment['character_end_times_seconds'];
-    if (ends is List && ends.isNotEmpty) {
-      durationMs = ((ends.last as num).toDouble() * 1000).round();
-    }
-  }
-  return _TtsClip(
-    bytes: bytes,
-    mime: 'audio/mpeg',
-    durationMs: durationMs.clamp(800, 12 * 60 * 1000),
-    voiceId: voiceId,
-    modelId: modelId.isEmpty ? 'eleven_multilingual_v2' : modelId,
-  );
 }
 
 Future<_TtsClip> _geminiSpeech({
@@ -342,7 +272,7 @@ Future<_TtsClip> _geminiSpeech({
     mime: 'audio/wav',
     durationMs: duration.inMilliseconds.clamp(800, 12 * 60 * 1000),
     voiceId: 'Kore',
-    modelId: 'gemini-tts',
+    modelId: 'gemini-3.1-flash-tts-preview',
   );
 }
 

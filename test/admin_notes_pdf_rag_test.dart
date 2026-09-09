@@ -273,6 +273,58 @@ void main() {
     expect(retried.ragStatus, NoteRagStatus.indexed);
   });
 
+  test('deleting a note drops the linked RAG source and chunks', () async {
+    final noteId = await notes.saveNote(
+      subjectId: 'pol',
+      chapterId: 'const',
+      topicId: 'fr',
+      title: 'Article 14',
+      status: NoteWorkflowStatus.published,
+      attachments: const [
+        NoteAttachment(name: 'a14.pdf', url: 'https://example.com/a14.pdf', type: 'pdf'),
+      ],
+    );
+    var note = await notes.getNote(noteId);
+    note = await indexer.indexNote(note!);
+    final sourceId = note.ragSourceId;
+    expect(await sources.get(sourceId), isNotNull);
+    expect(await chunks.getForSource(sourceId), isNotEmpty);
+
+    await indexer.deleteLinkedRag(note, patchNote: false);
+    await notes.deleteNote(noteId);
+
+    expect(await sources.get(sourceId), isNull);
+    expect(await chunks.getForSource(sourceId), isEmpty);
+  });
+
+  test('removing the PDF unpublishes leftover RAG for that note', () async {
+    final noteId = await notes.saveNote(
+      subjectId: 'pol',
+      chapterId: 'const',
+      topicId: 'fr',
+      title: 'Article 14',
+      status: NoteWorkflowStatus.published,
+      attachments: const [
+        NoteAttachment(name: 'a14.pdf', url: 'https://example.com/a14.pdf', type: 'pdf'),
+      ],
+    );
+    var note = await notes.getNote(noteId);
+    note = await indexer.indexNote(note!);
+    await notes.saveNote(
+      noteId: noteId,
+      subjectId: 'pol',
+      chapterId: 'const',
+      topicId: 'fr',
+      attachments: const [],
+    );
+    note = await notes.getNote(noteId);
+    await indexer.deleteLinkedRag(note!);
+    expect(await sources.findLinked(collection: 'notes', linkedId: noteId), isNull);
+    note = await notes.getNote(noteId);
+    expect(note!.ragSourceId, isEmpty);
+    expect(note.ragStatus, NoteRagStatus.notIndexed);
+  });
+
   test('pdfPageCountFromBytes reads /Count from a Pages catalog', () {
     final pdf = Uint8List.fromList(
       '%PDF-1.4\n1 0 obj\n<< /Type /Pages /Count 3 /Kids [] >>\nendobj\n%%EOF'

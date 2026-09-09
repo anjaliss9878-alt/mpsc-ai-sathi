@@ -1,11 +1,17 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:mpsc_combine_ai/rag/rag_exceptions.dart';
+import 'package:mpsc_combine_ai/rag/rag_pdf_page_image.dart';
 import 'package:mpsc_combine_ai/rag/rag_text.dart';
 import 'package:mpsc_combine_ai/services/ai_backend_base.dart';
 import 'package:mpsc_combine_ai/services/backend_request_headers.dart';
 import 'package:mpsc_combine_ai/utils/json_list.dart';
+
+/// PDF extract can run many Gemini OCR calls. Fail instead of leaving
+/// Admin on Processing forever.
+const Duration kRagExtractTimeout = Duration(minutes: 10);
 
 /// Server-side extract + embed client. API keys stay in Netlify / the local
 /// classroom worker — never in the Flutter bundle.
@@ -13,14 +19,13 @@ class RagBackendClient {
   RagBackendClient({
     http.Client? client,
     String? baseUrl,
-    IdTokenProvider? idToken,
+    this.idToken,
   })  : _client = client ?? http.Client(),
-        _baseUrlOverride = baseUrl,
-        _idToken = idToken;
+        _baseUrlOverride = baseUrl;
 
   final http.Client _client;
   final String? _baseUrlOverride;
-  final IdTokenProvider? _idToken;
+  final IdTokenProvider? idToken;
 
   String get _base {
     final configured = (_baseUrlOverride ?? aiBackendBase()).trim();
@@ -35,10 +40,35 @@ class RagBackendClient {
     if (fileUrl.trim().isEmpty) {
       throw RagException.pdfExtraction('fileUrl is empty.');
     }
-    final payload = await _post('/rag/extract', {
-      'fileUrl': fileUrl.trim(),
-      'title': title,
-    });
+    final payload = await _post(
+      '/rag/extract',
+      {
+        'fileUrl': fileUrl.trim(),
+        'title': title,
+      },
+      timeout: kRagExtractTimeout,
+    );
+    return _pagesFrom(payload);
+  }
+
+  /// Image-OCR extract used only after PDF-bytes text looks corrupted.
+  Future<List<RagExtractedPage>> extractPdfPageImages({
+    required List<RagPdfPageImage> images,
+    String title = '',
+    String fileUrl = '',
+  }) async {
+    if (images.isEmpty) {
+      throw RagException.emptyDoc();
+    }
+    final payload = await _post(
+      '/rag/extract',
+      {
+        if (fileUrl.trim().isNotEmpty) 'fileUrl': fileUrl.trim(),
+        'title': title,
+        'pageImages': [for (final image in images) image.toJson()],
+      },
+      timeout: kRagExtractTimeout,
+    );
     return _pagesFrom(payload);
   }
 
@@ -142,22 +172,80 @@ class RagBackendClient {
     return out;
   }
 
+  bool get _mayFallbackToProduction =>
+      _baseUrlOverride == null && isLoopbackAiBackend(_base);
+
   Future<Map<String, dynamic>> _post(
     String path,
-    Map<String, dynamic> body,
-  ) async {
-    final uri = Uri.parse('$_base$path');
+    Map<String, dynamic> body, {
+    Duration? timeout = const Duration(seconds: 180),
+  }) async {
+    final headers = await backendJsonHeaders(idToken: idToken);
+    final localDebugRag = kDebugMode &&
+        (path == '/rag/extract' ||
+            path == '/rag/embed' ||
+            path == '/rag/learn' ||
+            path == '/rag/retrieve');
+    final bases = (_baseUrlOverride == null &&
+            kDebugMode &&
+            kIsWeb &&
+            localDebugRag)
+        ? lessonBackendBases()
+        : [_base];
+    Object? lastUnreachable;
+    for (var i = 0; i < bases.length; i++) {
+      try {
+        return await _postTo(
+          bases[i],
+          path,
+          body,
+          headers: headers,
+          allowProductionFallback: !localDebugRag,
+          timeout: timeout,
+        );
+      } catch (e) {
+        lastUnreachable = e;
+        final more = i + 1 < bases.length;
+        if (more && _isUnreachableBackend(e)) continue;
+        rethrow;
+      }
+    }
+    throw RagException.fromError(lastUnreachable ?? 'network error');
+  }
+
+  Future<Map<String, dynamic>> _postTo(
+    String base,
+    String path,
+    Map<String, dynamic> body, {
+    required Map<String, String> headers,
+    required bool allowProductionFallback,
+    Duration? timeout = const Duration(seconds: 180),
+  }) async {
+    final uri = Uri.parse('$base$path');
     http.Response response;
     try {
-      response = await _client
-          .post(
-            uri,
-            headers: await backendJsonHeaders(idToken: _idToken),
-            body: jsonEncode(body),
-          )
-          .timeout(const Duration(seconds: 180));
+      final sent = _client.post(
+        uri,
+        headers: headers,
+        body: jsonEncode(body),
+      );
+      response = timeout == null ? await sent : await sent.timeout(timeout);
     } catch (e) {
-      throw RagException.fromError(e);
+      if (allowProductionFallback &&
+          _mayFallbackToProduction &&
+          _isUnreachableBackend(e)) {
+        return _postTo(
+          kProductionAiBackendOrigin,
+          path,
+          body,
+          headers: headers,
+          allowProductionFallback: false,
+          timeout: timeout,
+        );
+      }
+      throw RagException.fromError(
+        _unreachableMessage(base, path, e),
+      );
     }
     Map<String, dynamic> decoded;
     try {
@@ -166,15 +254,39 @@ class RagBackendClient {
           ? Map<String, dynamic>.from(raw)
           : <String, dynamic>{'error': response.body};
     } catch (_) {
-      throw RagException.gemini(
-        'Backend returned a non-JSON response (HTTP ${response.statusCode}).',
+      throw RagException.fromError(
+        'HTTP ${response.statusCode} $base$path returned a non-JSON body: '
+        '${response.body}',
       );
     }
     if (response.statusCode != 200) {
-      final err = '${decoded['error'] ?? 'HTTP ${response.statusCode}'}'.trim();
-      throw RagException.fromError(err);
+      final err = '${decoded['error'] ?? ''}'.trim();
+      final snippet = err.isNotEmpty ? err : response.body.trim();
+      throw RagException.fromError(
+        'HTTP ${response.statusCode} $base$path: $snippet',
+      );
     }
     return decoded;
+  }
+
+  Object _unreachableMessage(String base, String path, Object error) {
+    if (!isLoopbackAiBackend(base)) return error;
+    return 'Could not reach the RAG backend at $base$path. '
+        'Start the local classroom worker, or use the production Student '
+        'functions at $kProductionAiBackendOrigin. Original error: $error';
+  }
+
+  bool _isUnreachableBackend(Object error) {
+    final lower = '$error'.toLowerCase();
+    return lower.contains('failed to fetch') ||
+        lower.contains('clientexception') ||
+        lower.contains('socket') ||
+        lower.contains('connection refused') ||
+        lower.contains('connection reset') ||
+        lower.contains('timed out') ||
+        lower.contains('timeout') ||
+        lower.contains('failed host lookup') ||
+        lower.contains('xmlhttprequest');
   }
 
   /// Vertex-only embed. Throws when Vertex is unavailable so callers

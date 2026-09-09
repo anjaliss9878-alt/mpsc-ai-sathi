@@ -130,6 +130,20 @@ DateTime? ragLastIndexedAt(RagSource source) {
   return source.updatedAt;
 }
 
+/// True when Firestore still says Processing but this Admin tab is not
+/// running extract/embed (refresh, closed tab, or a crashed job).
+bool ragIndexingNeedsRetry(RagSource source, {required bool inFlight}) {
+  return source.status == RagSourceStatus.processing && !inFlight;
+}
+
+String ragIndexingHint(RagSource source, {required bool inFlight}) {
+  if (source.status != RagSourceStatus.processing) return '';
+  if (!inFlight) {
+    return 'Indexing is not running in this browser tab. Tap Retry.';
+  }
+  return 'Extracting and embedding — keep this Admin tab open. Large PDFs can take several minutes.';
+}
+
 /// Builds a Multi-RAG test query. Student-performance domain is included only
 /// when [studentUid] is explicitly set (admin opt-in).
 MultiRagQuery buildAdminRagTestQuery({
@@ -161,6 +175,7 @@ MultiRagQuery buildAdminRagTestQuery({
     subjectId: subjectId,
     chapterId: chapterId,
     topicId: topicId,
+    onlyPublishedReady: false,
     performance: includePerformance ? performance : const [],
   );
 }

@@ -115,6 +115,8 @@ if (skipWithoutEmulator()) {
         });
         await db.doc('students/alice/testAttempts/a1').set({ score: 40 });
         await db.doc('students/bob/testAttempts/b1').set({ score: 90 });
+        await db.doc('students/alice').set({ name: 'Alice' });
+        await db.doc('students/bob').set({ name: 'Bob' });
       });
       await run(testEnv);
     } finally {
@@ -228,6 +230,34 @@ if (skipWithoutEmulator()) {
       await assertFails(alice.doc('students/bob/testAttempts/b1').get());
       const admin = adminDb(env);
       await assertSucceeds(admin.doc('students/bob/testAttempts/b1').get());
+    });
+  });
+
+  test('student can write own diagnostic/testAttempts/studyPlans and profile', async () => {
+    await withEnv(async (env) => {
+      const alice = studentDb(env);
+      await assertSucceeds(
+        alice.doc('students/alice').set({ diagnosticCompleted: true }, { merge: true }),
+      );
+      await assertSucceeds(
+        alice.doc('students/alice/diagnosticAttempts/d1').set({ kind: 'diagnostic', totalQuestions: 30 }),
+      );
+      await assertSucceeds(
+        alice.doc('students/alice/testAttempts/diag_d1').set({ kind: 'diagnostic', testTitle: 'Diagnostic Test' }),
+      );
+      await assertSucceeds(
+        alice.doc('students/alice/studyPlans/2026-09-07').set({ kind: 'daily', uid: 'alice' }),
+      );
+      await assertFails(
+        alice.doc('students/bob/diagnosticAttempts/d1').set({ kind: 'diagnostic' }),
+      );
+      await assertFails(
+        alice.doc('students/bob/testAttempts/diag_d1').set({ kind: 'diagnostic' }),
+      );
+      await assertFails(
+        alice.doc('students/bob/studyPlans/2026-09-07').set({ kind: 'daily' }),
+      );
+      await assertFails(alice.doc('students/bob').update({ diagnosticCompleted: true }));
     });
   });
 }

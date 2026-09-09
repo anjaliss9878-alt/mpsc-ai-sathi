@@ -8,6 +8,7 @@
 [build.environment]
   NODE_VERSION = "20"
   FLUTTER_VERSION = "3.44.4"
+  RAG_BACKEND_URL = "https://mpscaisathi.co.in"
   CLASSROOM_VIDEO_WORKER = "https://mpscaisathi.co.in"
 
 # Flutter web SPA fallback

@@ -1,6 +1,6 @@
 const { json } = require('../lib/cors');
 const { withAuth } = require('../lib/auth');
-const { learnGrounded } = require('../lib/gemini');
+const { learnGroundedPreferVertex } = require('../lib/vertex');
 
 exports.handler = async (event) => {
   const gated = await withAuth(event);
@@ -14,7 +14,7 @@ exports.handler = async (event) => {
     if (!chunks.length) {
       return json(200, { insufficient: true, answer: '' }, event);
     }
-    const result = await learnGrounded({
+    const result = await learnGroundedPreferVertex({
       mode,
       question,
       chunks,

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:mpsc_combine_ai/screens/auth/forgot_password_screen.dart';
 import 'package:mpsc_combine_ai/screens/auth/signup_screen.dart';
 import 'package:mpsc_combine_ai/services/auth_service.dart';
+import 'package:mpsc_combine_ai/theme/app_brand.dart';
 import 'package:mpsc_combine_ai/theme/app_colors.dart';
 import 'package:mpsc_combine_ai/widgets/auth_widgets.dart';
 
@@ -54,9 +55,10 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return AuthScaffold(
-      title: 'MPSC COMBINE AI',
+      title: kAppName,
       subtitle: 'तुमच्या खात्यात लॉगिन करा',
       icon: Icons.school_rounded,
+      showBrandLogo: true,
       child: Form(
         key: _formKey,
         child: Column(

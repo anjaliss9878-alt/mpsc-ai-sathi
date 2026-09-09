@@ -1,7 +1,12 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
+import 'package:mpsc_combine_ai/rag/rag_pdf_extract_pipeline.dart';
+import 'package:mpsc_combine_ai/rag/rag_pdf_page_image.dart';
+import 'package:mpsc_combine_ai/rag/rag_pdf_raster.dart';
+import 'package:mpsc_combine_ai/rag/rag_pdf_raster_cache_io.dart';
 import 'package:mpsc_combine_ai/rag/rag_text.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/gemini_rest_client.dart';
 import 'package:mpsc_combine_ai/utils/json_list.dart';
@@ -101,9 +106,60 @@ class RagWorkerOps {
     return extractPdfBytes(bytes: bytes, title: title);
   }
 
+  Future<Map<String, dynamic>> extractPdfFromPageImages({
+    required List<dynamic> pageImages,
+    String title = '',
+  }) async {
+    final images = <RagPdfPageImage>[];
+    for (final raw in pageImages) {
+      final parsed = RagPdfPageImage.tryParse(raw);
+      if (parsed != null) images.add(parsed);
+    }
+    if (images.isEmpty) {
+      throw StateError('empty document');
+    }
+    return _geminiFromPageImages(images: images, title: title);
+  }
+
   Future<Map<String, dynamic>> extractPdfBytes({
     required Uint8List bytes,
     String title = '',
+  }) async {
+    return extractPdfWithCorruptionFallback(
+      extractFromPdfBytes: () async {
+        try {
+          return await _geminiFromPdfBytes(bytes: bytes, title: title);
+        } catch (e) {
+          if (ragPdfBytesExtractShouldUseImageFallback(e)) {
+            stderr.writeln(
+              '/rag/extract PDF-bytes JSON truncated; trying page-image OCR',
+            );
+          }
+          rethrow;
+        }
+      },
+      rasterizePages: ({required Set<int> pageNumbers}) {
+        ensureRagPdfRasterCacheDirectory();
+        stderr.writeln(
+          '/rag/extract raster cache=${Directory.systemTemp.path}',
+        );
+        return rasterizePdfPagesForRag(bytes, pageNumbers: pageNumbers);
+      },
+      extractFromPageImages: (images) {
+        return _geminiFromPageImages(images: images, title: title);
+      },
+      onTrace: (t) {
+        stderr.writeln(
+          '/rag/extract corrupted=${t.corrupted} '
+          'rasterized=${t.rasterizedPages} ocr=${t.ocrPages} path=${t.path}',
+        );
+      },
+    );
+  }
+
+  Future<Map<String, dynamic>> _geminiFromPdfBytes({
+    required Uint8List bytes,
+    required String title,
   }) async {
     final gemini = GeminiRestClient(
       apiKey: apiKey,
@@ -133,6 +189,66 @@ class RagWorkerOps {
       temperature: 0.1,
       maxOutputTokens: 8192,
     );
+    return {'pages': _cleanedPages(map)};
+  }
+
+  /// One Gemini call per page so OCR JSON stays under maxOutputTokens 8192.
+  Future<Map<String, dynamic>> _geminiFromPageImages({
+    required List<RagPdfPageImage> images,
+    required String title,
+  }) async {
+    final perPage = await ragMapLimited(
+      images.length,
+      kRagPageOcrConcurrency,
+      (i) => _geminiFromOnePageImage(image: images[i], title: title),
+    );
+    final cleaned = <Map<String, dynamic>>[
+      for (final pages in perPage) ...pages,
+    ];
+    if (cleaned.isEmpty) {
+      throw StateError('PDF extraction failed: image OCR returned no text.');
+    }
+    return {'pages': cleaned};
+  }
+
+  Future<List<Map<String, dynamic>>> _geminiFromOnePageImage({
+    required RagPdfPageImage image,
+    required String title,
+  }) async {
+    final gemini = GeminiRestClient(
+      apiKey: apiKey,
+      model: model,
+      client: _client,
+    );
+    final map = await gemini.generateJsonFromParts(
+      systemPrompt: kRagPdfImageOcrSystemPrompt,
+      userParts: [
+        {'text': ragPdfImageOcrUserPrompt(title: title)},
+        {
+          'text':
+              'PDF page ${image.pageNumber} (1-based). Transcribe this image.',
+        },
+        {
+          'inline_data': {
+            'mime_type': image.mimeType,
+            'data': image.base64Data,
+          },
+        },
+      ],
+      temperature: 0.1,
+      maxOutputTokens: 8192,
+    );
+    final pages = _cleanedPages(map);
+    return [
+      for (final p in pages)
+        if (p['page'] is int)
+          p
+        else
+          {'page': image.pageNumber, 'text': p['text']},
+    ];
+  }
+
+  List<Map<String, dynamic>> _cleanedPages(Map<String, dynamic> map) {
     final pages = asMapList(map['pages']);
     final cleaned = <Map<String, dynamic>>[];
     for (final p in pages) {
@@ -150,7 +266,7 @@ class RagWorkerOps {
       if (blob.isEmpty) throw StateError('empty document');
       cleaned.add({'text': blob});
     }
-    return {'pages': cleaned};
+    return cleaned;
   }
 
   Future<Map<String, dynamic>> learn({

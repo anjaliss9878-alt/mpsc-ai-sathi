@@ -1,11 +1,11 @@
 {
-    "name": "mpsc_combine_ai",
-    "short_name": "mpsc_combine_ai",
+    "name": "MPSC AI SATHI",
+    "short_name": "AI SATHI",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#0B2A4A",
+    "theme_color": "#0B2A4A",
+    "description": "MPSC AI SATHI — यशाचा मार्ग, AI च्या सोबतीने",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

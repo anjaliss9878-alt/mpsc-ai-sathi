@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:mpsc_combine_ai/models/test_result.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/generated_lesson.dart';
+import 'package:mpsc_combine_ai/services/test_result_repository.dart';
 import 'package:mpsc_combine_ai/theme/app_colors.dart';
 
 /// Runs the AI-generated MCQs for a lesson — architecture step: "Generate
@@ -7,10 +9,18 @@ import 'package:mpsc_combine_ai/theme/app_colors.dart';
 /// correct (with the AI's explanation), then move to the next question; a
 /// final score card is shown at the end.
 class GeneratedQuizScreen extends StatefulWidget {
-  const GeneratedQuizScreen({super.key, required this.topicName, required this.mcqs});
+  const GeneratedQuizScreen({
+    super.key,
+    required this.topicName,
+    required this.mcqs,
+    this.subjectId = '',
+    this.chapterId = '',
+  });
 
   final String topicName;
   final List<GeneratedMcq> mcqs;
+  final String subjectId;
+  final String chapterId;
 
   @override
   State<GeneratedQuizScreen> createState() => _GeneratedQuizScreenState();
@@ -21,26 +31,57 @@ class _GeneratedQuizScreenState extends State<GeneratedQuizScreen> {
   int _score = 0;
   int? _selected;
   bool _revealed = false;
+  late List<int?> _answers;
+  bool _saved = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _answers = List<int?>.filled(widget.mcqs.length, null);
+  }
 
   void _select(int optionIndex) {
     if (_revealed) return;
     setState(() {
       _selected = optionIndex;
       _revealed = true;
+      _answers[_index] = optionIndex;
       if (optionIndex == widget.mcqs[_index].correctIndex) _score++;
     });
   }
 
   void _next() {
     if (_index >= widget.mcqs.length - 1) {
+      _persist();
       setState(() => _index = widget.mcqs.length);
       return;
     }
     setState(() {
       _index++;
-      _selected = null;
-      _revealed = false;
+      _selected = _answers[_index];
+      _revealed = _answers[_index] != null;
     });
+  }
+
+  Future<void> _persist() async {
+    if (_saved) return;
+    _saved = true;
+    await TestResultRepository.instance.savePracticeAttempt(
+      title: widget.topicName,
+      kind: 'mcq',
+      subjectId: widget.subjectId,
+      chapterId: widget.chapterId,
+      questionResults: [
+        for (var i = 0; i < widget.mcqs.length; i++)
+          QuestionResult(
+            question: widget.mcqs[i].question,
+            options: widget.mcqs[i].options,
+            correctIndex: widget.mcqs[i].correctIndex,
+            selectedIndex: _answers[i],
+            explanation: widget.mcqs[i].explanation,
+          ),
+      ],
+    );
   }
 
   void _restart() {
@@ -49,6 +90,8 @@ class _GeneratedQuizScreenState extends State<GeneratedQuizScreen> {
       _score = 0;
       _selected = null;
       _revealed = false;
+      _answers = List<int?>.filled(widget.mcqs.length, null);
+      _saved = false;
     });
   }
 

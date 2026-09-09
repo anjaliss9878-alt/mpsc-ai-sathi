@@ -5,12 +5,11 @@ import 'package:http/http.dart' as http;
 import 'package:mpsc_combine_ai/services/ai_video_render/ai_video_render_engine_io.dart';
 import 'package:mpsc_combine_ai/services/ai_video_render/render_models.dart';
 import 'package:mpsc_combine_ai/services/ai_video_render/sansad_premium_lesson.dart';
-import 'package:mpsc_combine_ai/services/elevenlabs_tts_service.dart';
 
-/// Renders the premium ~2-minute संसद MP4 (Canvas + ElevenLabs + FFmpeg).
+/// Renders the premium ~2-minute संसद MP4 (Canvas + Gemini TTS + FFmpeg).
 ///
-/// Clears TestWidgetsFlutterBinding's mock HttpOverrides so ElevenLabs can
-/// reach the network, then injects a real [http.Client].
+/// Clears TestWidgetsFlutterBinding's mock HttpOverrides so `/ai/tts`
+/// can reach the network, then injects a real [http.Client].
 ///
 ///   flutter test tool/render_sansad_video.dart --dart-define-from-file=dart_defines.json
 void main() {
@@ -27,13 +26,11 @@ void main() {
     final realClient = http.Client();
     addTearDown(realClient.close);
 
-    final eleven = ElevenLabsTtsService(client: realClient);
     final videosDir = Directory('build/ai_rendered_videos');
     final workRoot = Directory('build/ai_video_work_root');
     await videosDir.create(recursive: true);
     await workRoot.create(recursive: true);
     final engine = AiVideoRenderEngine(
-      elevenLabs: eleven,
       httpClient: realClient,
       videosDirectory: videosDir,
       workRootDirectory: workRoot,

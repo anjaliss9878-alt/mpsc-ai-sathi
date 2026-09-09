@@ -124,11 +124,50 @@ class NoteRagIndexer {
 
   /// Publish flag on the linked RAG source follows note visibility.
   Future<void> syncPublished(NoteItem note) async {
-    final id = note.ragSourceId.trim();
-    if (id.isEmpty) return;
-    final source = await _sources.get(id);
-    if (source == null) return;
-    await _processing.setPublished(source, note.isStudentVisible);
+    final ids = await _linkedSourceIds(note);
+    for (final id in ids) {
+      final source = await _sources.get(id);
+      if (source == null) continue;
+      await _processing.setPublished(source, note.isStudentVisible);
+    }
+  }
+
+  /// Drops indexed chunks/source for a note (delete or PDF removed).
+  /// Does not delete the notes Storage PDF unless [RagSource.ownsFile] is true.
+  Future<void> deleteLinkedRag(
+    NoteItem note, {
+    bool patchNote = true,
+  }) async {
+    final ids = await _linkedSourceIds(note);
+    for (final id in ids) {
+      final source = await _sources.get(id);
+      if (source == null) continue;
+      await _processing.deleteSourceSafely(source);
+    }
+    if (patchNote && note.id.isNotEmpty) {
+      try {
+        await _notes.patchNote(note.id, {
+          'ragStatus': noteRagStatusToString(NoteRagStatus.notIndexed),
+          'ragSourceId': '',
+          'ragError': '',
+        });
+      } catch (_) {}
+    }
+  }
+
+  Future<Set<String>> _linkedSourceIds(NoteItem note) async {
+    final ids = <String>{};
+    if (note.ragSourceId.trim().isNotEmpty) {
+      ids.add(note.ragSourceId.trim());
+    }
+    if (note.id.isNotEmpty) {
+      final linked = await _sources.findLinked(
+        collection: NotesRepository.notesCollection,
+        linkedId: note.id,
+      );
+      if (linked != null) ids.add(linked.id);
+    }
+    return ids;
   }
 
   Future<NoteItem> retry(

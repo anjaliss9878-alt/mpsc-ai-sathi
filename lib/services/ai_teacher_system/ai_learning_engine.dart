@@ -6,13 +6,14 @@ import 'package:mpsc_combine_ai/services/ai_teacher_system/ai_chapter_debug.dart
 import 'package:mpsc_combine_ai/services/ai_teacher_system/ai_lesson_repository.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/full_lesson_narration.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/generated_lesson.dart';
+import 'package:mpsc_combine_ai/services/ai_teacher_system/lecture_lesson_sanitizer.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/lesson_cache_service.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/lesson_generation_service.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/media_bytes_cache.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/subject_teacher.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/video_generation_pipeline.dart';
 import 'package:mpsc_combine_ai/services/auth_service.dart';
-import 'package:mpsc_combine_ai/services/elevenlabs_tts_service.dart';
+import 'package:mpsc_combine_ai/services/ai_tts_service.dart';
 
 /// Production AI learning pack: video lecture + notes + MCQs + PYQs + revision.
 class AiLearningPack {
@@ -31,7 +32,7 @@ class AiLearningPack {
   bool get hasAudio => audio != null && audio!.bytes.isNotEmpty;
 }
 
-/// Topic → subject teacher → Gemini lesson → cleaned script → ElevenLabs.
+/// Topic → subject teacher → Gemini lesson → cleaned script → Gemini TTS.
 ///
 /// No PDF upload. No student-visible backend stages. Cached lessons replay
 /// instantly. MP4 ffmpeg is never on the student wait path.
@@ -103,7 +104,9 @@ class AiLearningEngine {
           _hasDisplayableChapter(cached) &&
           !isPlaceholderLesson(cached, topic: trimmed)) {
         aiChapterLog('cache_hit_local', {'title': cached.topicName});
-        return _withIds(cached, chapterId: chapterId, subjectId: subjectId);
+        return ensureClassroomVideoScenes(
+          _withIds(cached, chapterId: chapterId, subjectId: subjectId),
+        );
       }
       final uid = authService.currentUser?.uid;
       if (uid != null) {
@@ -123,7 +126,7 @@ class AiLearningEngine {
             );
             unawaited(_cache.write(key, lesson));
             aiChapterLog('cache_hit_firestore', {'title': lesson.topicName});
-            return lesson;
+            return ensureClassroomVideoScenes(lesson);
           }
         } catch (e) {
           aiChapterLog('firestore_cache_skip', {'error': '$e'});
@@ -140,10 +143,12 @@ class AiLearningEngine {
       subjectContext: subjectContext ?? detected.displayName,
       teachingSubject: detected,
     );
-    final lesson = _withIds(
-      generated,
-      chapterId: chapterId,
-      subjectId: subjectId,
+    final lesson = ensureClassroomVideoScenes(
+      _withIds(
+        generated,
+        chapterId: chapterId,
+        subjectId: subjectId,
+      ),
     );
     _logChapter(lesson);
     try {
@@ -184,22 +189,23 @@ class AiLearningEngine {
   }) async {
     final style = subject ??
         detectMpscTeachingSubject(topic, hint: lesson.subjectName);
-    final cues = _narration.lessonSpeakCues(lesson);
+    final staged = ensureClassroomVideoScenes(lesson);
+    final cues = _narration.lessonSpeakCues(staged);
     final scriptLines = [for (final cue in cues) cue.text];
     final slideIndices = [for (final cue in cues) cue.slideIndex];
     final script = _narration.buildLectureScript(scriptLines: scriptLines);
     if (script.trim().isEmpty) {
-      throw const ElevenLabsTtsException(
+      throw const AiTtsException(
         'Empty lesson script',
         statusCode: 400,
       );
     }
-    final audioKey = ElevenLabsTtsService.cacheKey(
+    final audioKey = AiTtsService.cacheKey(
       text: script,
-      voiceId: elevenLabsTtsService.resolvedVoiceId(style),
-      modelId: elevenLabsTtsService.resolvedModelId,
+      voiceId: 'Kore',
+      modelId: kGeminiTtsModel,
     );
-    final cachedClip = ElevenLabsTtsService.cachedAudio(audioKey);
+    final cachedClip = AiTtsService.cachedAudio(audioKey);
     if (cachedClip != null && cachedClip.bytes.isNotEmpty) {
       return LessonAudioBundle(
         bytes: cachedClip.bytes,
@@ -219,7 +225,7 @@ class AiLearningEngine {
           Duration(milliseconds: (script.length * 72).clamp(8000, 240000));
       return LessonAudioBundle(
         bytes: cachedBytes,
-        mimeType: 'audio/mpeg',
+        mimeType: 'audio/wav',
         duration: duration,
         script: script,
         spans: beatSpansFor(

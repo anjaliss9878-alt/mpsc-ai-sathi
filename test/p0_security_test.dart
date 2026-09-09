@@ -8,8 +8,13 @@ import 'package:mpsc_combine_ai/services/rag_backend_client.dart';
 
 void main() {
   test('production Netlify web build does not dart-define API secrets', () {
-    for (final path in ['tool/netlify_build.sh', 'tool/netlify_build_admin.sh']) {
+    for (final path in [
+      'tool/netlify_build.sh',
+      'tool/netlify_build_admin.sh',
+      'tool/run_web_server.ps1',
+    ]) {
       final script = File(path).readAsStringSync();
+      expect(script.contains('--dart-define-from-file'), isFalse, reason: path);
       expect(script.contains('--dart-define="AI_API_KEY'), isFalse, reason: path);
       expect(script.contains('--dart-define=AI_API_KEY'), isFalse, reason: path);
       expect(script.contains('--dart-define="ELEVENLABS_API_KEY'), isFalse, reason: path);

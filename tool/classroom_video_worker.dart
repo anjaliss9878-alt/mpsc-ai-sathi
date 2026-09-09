@@ -1,6 +1,6 @@
 // Local classroom video backend.
 //
-// Topic → Gemini Marathi script → one ElevenLabs audio file → synced slides
+// Topic → Gemini Marathi script → Google Gemini TTS → synced slides
 // → FFmpeg MP4 → Firebase Storage → Firestore videoUrl.
 //
 // Usage (from repo root):
@@ -15,6 +15,7 @@ import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 import 'package:mpsc_combine_ai/models/chat_message.dart';
+import 'package:mpsc_combine_ai/services/ai_backend_base.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_service.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/gemini_rest_client.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/generated_lesson.dart';
@@ -24,7 +25,7 @@ import 'package:mpsc_combine_ai/services/ai_teacher_system/subject_teacher.dart'
 import 'package:mpsc_combine_ai/services/ai_video_render/gemini_tts_synthesizer.dart';
 import 'package:mpsc_combine_ai/services/classroom_video/classroom_lecture.dart';
 import 'package:mpsc_combine_ai/services/classroom_video/classroom_video_script.dart';
-import 'package:mpsc_combine_ai/services/elevenlabs_tts_service.dart';
+import 'package:mpsc_combine_ai/services/ai_tts_service.dart';
 import 'package:mpsc_combine_ai/utils/json_list.dart';
 import 'rag_worker_ops.dart';
 
@@ -40,18 +41,38 @@ Future<void> main(List<String> args) async {
       (args.isNotEmpty ? int.tryParse(args.first) : null) ??
       8791;
   final defines = await _loadDefines();
-  final apiKey = '${defines['AI_API_KEY'] ?? ''}'.trim();
+  final apiKey = resolveWorkerGeminiApiKey(
+    envValue: Platform.environment['AI_API_KEY'] ?? '',
+    definesValue: '${defines['AI_API_KEY'] ?? ''}',
+  );
   final model = '${defines['AI_MODEL'] ?? 'gemini-flash-lite-latest'}'.trim();
+  stdout.writeln('AI_API_KEY configured: ${apiKey.isNotEmpty}');
   if (apiKey.isEmpty) {
-    stderr.writeln('Missing AI_API_KEY in dart_defines.json');
+    stderr.writeln(
+      'Missing AI_API_KEY. Set the AI_API_KEY process environment variable '
+      '(preferred) or dart_defines.json for this worker only.',
+    );
     exit(1);
   }
 
   final engine = _VideoEngine(defines: defines, apiKey: apiKey, model: model);
-  final server = await HttpServer.bind(InternetAddress.loopbackIPv4, port);
+  final ipv4 = await HttpServer.bind(InternetAddress.loopbackIPv4, port);
   stdout.writeln('Classroom video backend http://127.0.0.1:$port');
+  HttpServer? ipv6;
+  try {
+    ipv6 = await HttpServer.bind(InternetAddress.loopbackIPv6, port);
+    stdout.writeln('Classroom video backend http://localhost:$port');
+  } catch (e) {
+    stderr.writeln('IPv6 loopback bind skipped: $e');
+  }
   stdout.writeln('Waiting for Generate Video jobs…');
+  await Future.wait([
+    _serve(ipv4, engine),
+    if (ipv6 != null) _serve(ipv6, engine),
+  ]);
+}
 
+Future<void> _serve(HttpServer server, _VideoEngine engine) async {
   await for (final request in server) {
     unawaited(_handle(request, engine));
   }
@@ -74,6 +95,7 @@ Future<void> _handle(HttpRequest request, _VideoEngine engine) async {
           'ok': true,
           'canRender': ffmpegOk,
           'ffmpeg': ffmpegOk,
+          'aiApiKeyConfigured': engine.apiKey.trim().isNotEmpty,
         }));
       await request.response.close();
       return;
@@ -132,7 +154,7 @@ Future<void> _handle(HttpRequest request, _VideoEngine engine) async {
         request.response.write(jsonEncode(audio));
       } catch (e, st) {
         stderr.writeln('ai/tts failed: $e\n$st');
-        final status = e is ElevenLabsTtsException
+        final status = e is AiTtsException
             ? (e.statusCode ?? 500)
             : 500;
         request.response.statusCode =
@@ -140,9 +162,7 @@ Future<void> _handle(HttpRequest request, _VideoEngine engine) async {
                 ? status
                 : 500;
         request.response.write(jsonEncode({
-          'error': e is ElevenLabsTtsException
-              ? e.message
-              : '$e',
+          'error': 'Gemini TTS failed',
           'status': status,
         }));
       }
@@ -180,13 +200,13 @@ Future<void> _handle(HttpRequest request, _VideoEngine engine) async {
       await request.response.close();
       return;
     }
-    if (request.method == 'GET' && path == '/ai/test/elevenlabs') {
+    if (request.method == 'GET' && path == '/ai/test/tts') {
       try {
-        final result = await engine.testElevenLabs();
+        final result = await engine.testGeminiTts();
         request.response.statusCode = 200;
         request.response.write(jsonEncode(result));
       } catch (e, st) {
-        stderr.writeln('ai/test/elevenlabs failed: $e\n$st');
+        stderr.writeln('ai/test/tts failed: $e\n$st');
         request.response.statusCode = 500;
         request.response.write(jsonEncode({'ok': false, 'error': '$e'}));
       }
@@ -231,7 +251,15 @@ Future<void> _handle(HttpRequest request, _VideoEngine engine) async {
         final ops = RagWorkerOps(apiKey: engine.apiKey, model: engine.model);
         if (path == '/rag/extract') {
           final fileUrl = '${map['fileUrl'] ?? ''}'.trim();
-          if (fileUrl.isEmpty) {
+          final pageImages = map['pageImages'];
+          if (pageImages is List && pageImages.isNotEmpty) {
+            final result = await ops.extractPdfFromPageImages(
+              pageImages: pageImages,
+              title: '${map['title'] ?? ''}'.trim(),
+            );
+            request.response.statusCode = 200;
+            request.response.write(jsonEncode(result));
+          } else if (fileUrl.isEmpty) {
             request.response.statusCode = 400;
             request.response.write('{"error":"fileUrl required"}');
           } else {
@@ -376,6 +404,7 @@ void _cors(HttpResponse response) {
     ..set('Access-Control-Allow-Origin', '*')
     ..set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
     ..set('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+    ..set('Access-Control-Allow-Private-Network', 'true')
     ..set('Content-Type', 'application/json; charset=utf-8');
 }
 
@@ -396,34 +425,21 @@ class _VideoEngine {
   Future<Map<String, dynamic>> ttsOnly(Map<String, dynamic> map) async {
     final text = speakableMarathi('${map['text'] ?? ''}'.trim());
     if (text.isEmpty) {
-      throw const ElevenLabsTtsException(
+      throw const AiTtsException(
         'Empty lesson script',
         statusCode: 400,
       );
     }
-    final subject = MpscTeachingSubjectX.tryParse('${map['subject'] ?? ''}') ??
-        detectMpscTeachingSubject(text);
-    final voiceId = '${map['voiceId'] ?? defines['ELEVENLABS_VOICE_ID'] ?? ''}'
-        .trim();
-    final modelId =
-        '${map['modelId'] ?? defines['ELEVENLABS_MODEL_ID'] ?? defines['ELEVENLABS_MODEL'] ?? ''}'
-            .trim();
-    final clip = await _synthesize(
-      text,
-      topic: subject.id,
-      voiceId: voiceId,
-      modelId: modelId,
-    );
+    final clip = await _synthesizeGemini(text);
     return {
       'audio_base64': base64Encode(clip.bytes),
       'mimeType': clip.mime,
+      'mime_type': clip.mime,
       'durationMs': clip.duration.inMilliseconds,
-      'voiceId': clip.voiceId.isNotEmpty
-          ? clip.voiceId
-          : (voiceId.isNotEmpty ? voiceId : subject.elevenLabsVoiceId),
+      'voiceId': clip.voiceId.isNotEmpty ? clip.voiceId : 'Kore',
       'modelId': clip.modelId.isNotEmpty
           ? clip.modelId
-          : (modelId.isNotEmpty ? modelId : 'eleven_multilingual_v2'),
+          : 'gemini-3.1-flash-tts-preview',
     };
   }
 
@@ -479,21 +495,9 @@ class _VideoEngine {
       }
     }
     if (lesson.pyqs.length < 3) {
-      try {
-        final extra = await gemini.generateJson(
-          systemPrompt: 'Reply with JSON only.',
-          userText:
-              'Topic: $topic. Create ${(10 - lesson.pyqs.length).clamp(1, 10)} '
-              'PYQ-based practice questions in Marathi. Set exam to '
-              '"PYQ-based practice question". JSON: {"pyqs":[{question,answer,analysis,exam}]}',
-        );
-        final more = asMapList(extra['pyqs']).map(GeneratedPyq.fromMap);
-        lesson = lesson.copyWith(
-          pyqs: [...lesson.pyqs, ...more].take(10).toList(),
-        );
-      } catch (e) {
-        stderr.writeln('pyq top-up skipped: $e');
-      }
+      stderr.writeln(
+        'pyq top-up skipped: classroom lessons use published PYQs only',
+      );
     }
     return lesson;
   }
@@ -524,20 +528,22 @@ class _VideoEngine {
     );
   }
 
-  Future<Map<String, dynamic>> testElevenLabs() async {
-    final key = '${defines['ELEVENLABS_API_KEY'] ?? ''}'.trim();
+  Future<Map<String, dynamic>> testGeminiTts() async {
+    final key = apiKey.trim();
     if (key.isEmpty) {
       throw StateError(
-        'ElevenLabs API key missing. Set ELEVENLABS_API_KEY in dart_defines.json.',
+        'Gemini TTS credentials missing. Set AI_API_KEY in dart_defines.json.',
       );
     }
-    final clip = await ElevenLabsTtsService(client: _http, apiKey: key)
-        .testMarathiGreeting();
+    final wav = await GeminiTtsSynthesizer(client: _http, apiKey: key)
+        .synthesizeMarathiFacultyWithRetry(
+      'नमस्कार विद्यार्थ्यांनो. आज आपण भारतीय राज्यघटनेतील मूलभूत अधिकारांचा अभ्यास करणार आहोत.',
+    );
     return {
       'ok': true,
-      'bytes': clip.bytes.length,
-      'durationMs': clip.duration.inMilliseconds,
-      'voiceId': clip.voiceId,
+      'bytes': wav.length,
+      'modelId': 'gemini-3.1-flash-tts-preview',
+      'voiceId': 'Kore',
     };
   }
 
@@ -603,7 +609,7 @@ class _VideoEngine {
   }) async {
     final resolvedScript = script.trim().isNotEmpty
         ? script.trim()
-        : ElevenLabsTtsService.shortMarathiTestScript;
+        : AiTtsService.shortMarathiTestScript;
     final resolvedTopic =
         topic.trim().isNotEmpty ? topic.trim() : 'मूलभूत अधिकार';
     ClassroomLecture lecture;
@@ -637,8 +643,8 @@ class _VideoEngine {
     _progressLocal('Generating AI Teacher voice...');
     final audio = await _synthesize(lecture.narration, topic: resolvedTopic);
     if (audio.bytes.isEmpty) {
-      throw const ElevenLabsTtsException(
-        'ElevenLabs returned empty audio',
+      throw const AiTtsException(
+        'Gemini TTS returned empty audio',
         statusCode: 502,
       );
     }
@@ -786,8 +792,8 @@ class _VideoEngine {
       audio = await _synthesize(lecture.narration, topic: resolvedTopic);
     }
     if (audio.bytes.isEmpty) {
-      throw const ElevenLabsTtsException(
-        'ElevenLabs returned empty audio',
+      throw const AiTtsException(
+        'Gemini TTS returned empty audio',
         statusCode: 502,
       );
     }
@@ -914,67 +920,29 @@ class _VideoEngine {
   Future<_Audio> _synthesize(
     String narration, {
     required String topic,
-    String voiceId = '',
-    String modelId = '',
   }) async {
     final text = speakableMarathi(narration.trim());
     if (text.isEmpty) {
-      throw const ElevenLabsTtsException(
+      throw const AiTtsException(
         'Empty lesson script',
         statusCode: 400,
       );
     }
-    final key = '${defines['ELEVENLABS_API_KEY'] ?? ''}'.trim();
-    if (key.isEmpty) {
-      return _synthesizeGemini(text);
-    }
-    final eleven = ElevenLabsTtsService(client: _http, apiKey: key);
-    final subject = detectMpscTeachingSubject(topic);
-    final voice = voiceId.trim().isNotEmpty
-        ? voiceId.trim()
-        : '${defines['ELEVENLABS_VOICE_ID'] ?? ''}'.trim();
-    final model = modelId.trim().isNotEmpty
-        ? modelId.trim()
-        : '${defines['ELEVENLABS_MODEL_ID'] ?? defines['ELEVENLABS_MODEL'] ?? ''}'
-            .trim();
-    stdout.writeln(
-      'ElevenLabs one-file TTS subject=${subject.id} chars=${text.length}',
-    );
-    final clip = await eleven.synthesizeLesson(
-      text: text,
-      subject: subject,
-      voiceId: voice,
-      modelId: model,
-    );
-    if (clip.bytes.isEmpty) {
-      throw const ElevenLabsTtsException(
-        'ElevenLabs returned empty audio',
-        statusCode: 502,
-      );
-    }
-    return _Audio(
-      bytes: clip.bytes,
-      mime: clip.mimeType,
-      duration: clip.duration,
-      voiceId: clip.voiceId,
-      modelId: clip.modelId,
-    );
+    return _synthesizeGemini(text);
   }
 
-  /// Same Gemini TTS path as tool/ai_chapter_backend.dart when ElevenLabs
-  /// is not configured.
   Future<_Audio> _synthesizeGemini(String text) async {
     final geminiKey = apiKey.trim();
     if (geminiKey.isEmpty) {
-      throw const ElevenLabsTtsException(
-        'Marathi TTS credentials missing. Set AI_API_KEY or ELEVENLABS_API_KEY.',
+      throw const AiTtsException(
+        'Gemini TTS credentials missing. Set AI_API_KEY.',
         statusCode: 401,
       );
     }
     final gemini = GeminiTtsSynthesizer(client: _http, apiKey: geminiKey);
     final chunks = _chunkSpeech(text, 900);
     if (chunks.isEmpty) {
-      throw const ElevenLabsTtsException(
+      throw const AiTtsException(
         'Empty lesson script',
         statusCode: 400,
       );
@@ -984,7 +952,7 @@ class _VideoEngine {
     for (final chunk in chunks) {
       final wav = await gemini.synthesizeMarathiFacultyWithRetry(chunk);
       if (wav.length < 256) {
-        throw const ElevenLabsTtsException(
+        throw const AiTtsException(
           'Gemini TTS returned empty audio',
           statusCode: 502,
         );
@@ -999,7 +967,7 @@ class _VideoEngine {
         bytes[1] != 0x49 ||
         bytes[2] != 0x46 ||
         bytes[3] != 0x46) {
-      throw const ElevenLabsTtsException(
+      throw const AiTtsException(
         'Gemini TTS returned empty audio',
         statusCode: 502,
       );
@@ -1011,7 +979,7 @@ class _VideoEngine {
         milliseconds: duration.inMilliseconds.clamp(800, 12 * 60 * 1000),
       ),
       voiceId: 'Kore',
-      modelId: 'gemini-tts',
+      modelId: 'gemini-3.1-flash-tts-preview',
     );
   }
 
@@ -1459,10 +1427,19 @@ List<String> _chunkSpeech(String text, int maxChars) {
 }
 
 Future<Map<String, dynamic>> _loadDefines() async {
-  final file = File('dart_defines.json');
-  if (!file.existsSync()) return {};
-  final map = jsonDecode(file.readAsStringSync());
-  if (map is Map<String, dynamic>) return map;
-  if (map is Map) return Map<String, dynamic>.from(map);
+  for (final file in _definesCandidateFiles()) {
+    if (!file.existsSync()) continue;
+    final map = jsonDecode(file.readAsStringSync());
+    if (map is Map<String, dynamic>) return map;
+    if (map is Map) return Map<String, dynamic>.from(map);
+  }
   return {};
+}
+
+Iterable<File> _definesCandidateFiles() sync* {
+  yield File('dart_defines.json');
+  yield File('${Directory.current.path}${Platform.pathSeparator}dart_defines.json');
+  final scriptDir = File.fromUri(Platform.script).parent;
+  yield File('${scriptDir.path}${Platform.pathSeparator}dart_defines.json');
+  yield File('${scriptDir.parent.path}${Platform.pathSeparator}dart_defines.json');
 }

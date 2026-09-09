@@ -1,7 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET"/>
     <application
-        android:label="mpsc_combine_ai"
+        android:label="MPSC AI SATHI"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

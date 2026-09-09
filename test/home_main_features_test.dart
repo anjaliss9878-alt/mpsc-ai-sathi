@@ -7,6 +7,7 @@ import 'package:mpsc_combine_ai/screens/home/home_main_features.dart';
 import 'package:mpsc_combine_ai/screens/jobs/job_alerts_screen.dart';
 import 'package:mpsc_combine_ai/screens/practice/smart_practice_test_series_screen.dart';
 import 'package:mpsc_combine_ai/screens/pyq_screen.dart';
+import 'package:mpsc_combine_ai/screens/study_content/study_content_screen.dart';
 import 'package:mpsc_combine_ai/screens/study_planner_screen.dart';
 import 'package:mpsc_combine_ai/screens/syllabus/syllabus_tracker_screen.dart';
 import 'package:mpsc_combine_ai/screens/weakness/ai_weakness_tracker_screen.dart';
@@ -96,6 +97,7 @@ void main() {
     expect(kMainFeatures[5].buildScreen(), isA<AiTeacherScreen>());
     expect(kMainFeatures[6].buildScreen(), isA<SyllabusTrackerScreen>());
     expect(kMainFeatures[8].buildScreen(), isA<AiTeacherHubScreen>());
+    expect(kMainFeatures.last.buildScreen(), isA<StudyContentScreen>());
   });
 
   testWidgets('tapping Job Alerts opens the Job Alerts screen', (tester) async {

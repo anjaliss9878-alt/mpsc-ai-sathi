@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:mpsc_combine_ai/data/student_onboarding.dart';
 import 'package:mpsc_combine_ai/models/daily_study_plan.dart';
 import 'package:mpsc_combine_ai/models/student_profile.dart';
-import 'package:mpsc_combine_ai/screens/auth/signup_screen.dart' show targetExamOptions;
+import 'package:mpsc_combine_ai/widgets/target_exam_select_field.dart';
 import 'package:mpsc_combine_ai/screens/mcq_practice_screen.dart';
 import 'package:mpsc_combine_ai/screens/mock_tests_screen.dart';
 import 'package:mpsc_combine_ai/screens/notes_detail_screen.dart';
+import 'package:mpsc_combine_ai/screens/onboarding/diagnostic_flow_screen.dart';
 import 'package:mpsc_combine_ai/screens/pyq_screen.dart';
 import 'package:mpsc_combine_ai/screens/revision/revision_hub_screen.dart';
 import 'package:mpsc_combine_ai/screens/subject_notes_screen.dart';
@@ -28,10 +30,13 @@ class _DailyPlannerTabState extends State<DailyPlannerTab> {
   String? _targetExam;
   DateTime? _examDate;
   double _hours = 4;
+  int _durationDays = 90;
   List<String> _assignedSubjectIds = const [];
   bool _prefsReady = false;
   bool _generating = false;
+  bool _autoTried = false;
   String? _actionError;
+  StudentProfile? _profile;
 
   String? get _uid => authService.currentUser?.uid;
 
@@ -51,15 +56,20 @@ class _DailyPlannerTabState extends State<DailyPlannerTab> {
         _applyProfile(profile);
         _prefsReady = true;
       });
+      await _autoGenerateIfNeeded();
     } catch (_) {
       if (mounted) setState(() => _prefsReady = true);
     }
   }
 
   void _applyProfile(StudentProfile profile) {
+    _profile = profile;
     _targetExam = profile.targetExam.isNotEmpty ? profile.targetExam : null;
     _hours = profile.dailyStudyHours.clamp(1, 12);
     _assignedSubjectIds = profile.assignedSubjectIds;
+    _durationDays = profile.preparationDurationDays > 0
+        ? profile.preparationDurationDays
+        : 90;
     if (profile.examDate.isNotEmpty) {
       _examDate = DateTime.tryParse(profile.examDate);
     }
@@ -72,6 +82,9 @@ class _DailyPlannerTabState extends State<DailyPlannerTab> {
             : DailyStudyPlan.dateKeyFor(_examDate),
         dailyHours: _hours,
         assignedSubjectIds: _assignedSubjectIds,
+        preparationDurationDays: _durationDays,
+        preparationStage: _profile?.preparationStage ?? '',
+        preferredLanguage: _profile?.preferredLanguage ?? '',
       );
 
   Future<void> _savePrefs() async {
@@ -83,11 +96,30 @@ class _DailyPlannerTabState extends State<DailyPlannerTab> {
         targetExam: _prefs().targetExam,
         examDate: _prefs().examDate,
         dailyStudyHours: _hours,
+        preparationDurationDays: _durationDays,
       );
     } catch (e) {
       if (!mounted) return;
       setState(() => _actionError = 'Could not save preferences: $e');
     }
+  }
+
+  Future<void> _autoGenerateIfNeeded() async {
+    final uid = _uid;
+    if (uid == null || _autoTried) return;
+    _autoTried = true;
+    try {
+      final existing = await studentProgressRepository.getDailyPlan(uid);
+      if (existing == null || existing.tasks.isEmpty) {
+        await _generate(force: true);
+        return;
+      }
+      final attempts = await studentProgressRepository.getTestAttempts(uid);
+      if (attempts.isEmpty || existing.generatedAt == null) return;
+      if (attempts.first.dateTime.isAfter(existing.generatedAt!)) {
+        await _generate(force: true);
+      }
+    } catch (_) {}
   }
 
   Future<void> _generate({bool force = false}) async {
@@ -168,6 +200,32 @@ class _DailyPlannerTabState extends State<DailyPlannerTab> {
         taskId: task.id,
         status: DailyPlanTaskStatus.completed,
       );
+      final updated = await studentProgressRepository.getDailyPlan(
+        uid,
+        dateKey: dateKey,
+      );
+      if (updated != null && updated.openTasks.isEmpty) {
+        final tomorrow = DateTime.now().add(const Duration(days: 1));
+        final nextKey = DailyStudyPlan.dateKeyFor(tomorrow);
+        final existingNext =
+            await studentProgressRepository.getDailyPlan(uid, dateKey: nextKey);
+        if (existingNext == null || existingNext.tasks.isEmpty) {
+          final next = await dailyPlannerService.generate(
+            uid: uid,
+            prefs: _prefs(),
+            now: tomorrow,
+          );
+          if (next.tasks.isNotEmpty) {
+            await studentProgressRepository.saveDailyPlan(uid, next);
+          }
+        }
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Today is complete. Tomorrow’s plan is ready.'),
+          ),
+        );
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() => _actionError = 'Could not mark the task complete: $e');
@@ -308,6 +366,7 @@ class _DailyPlannerTabState extends State<DailyPlannerTab> {
                   targetExam: _targetExam,
                   examDate: _examDate,
                   hours: _hours,
+                  durationDays: _durationDays,
                   prefsReady: _prefsReady,
                   onExamChanged: (v) {
                     setState(() => _targetExam = v);
@@ -315,6 +374,10 @@ class _DailyPlannerTabState extends State<DailyPlannerTab> {
                   },
                   onHoursChanged: (v) => setState(() => _hours = v),
                   onHoursChangeEnd: (_) => _savePrefs(),
+                  onDurationChanged: (days) {
+                    setState(() => _durationDays = days);
+                    _savePrefs();
+                  },
                   onPickDate: _pickExamDate,
                 ),
                 const SizedBox(height: 12),
@@ -324,6 +387,11 @@ class _DailyPlannerTabState extends State<DailyPlannerTab> {
                   remaining: plan?.remainingTasks.length ?? 0,
                   completed: plan?.completedCount ?? 0,
                   weekDays: weekly.daysWithPlan,
+                  syllabusPercent: plan?.syllabusPercent ?? 0,
+                  topicsCompleted: plan?.topicsCompleted ?? 0,
+                  topicsTotal: plan?.topicsTotal ?? 0,
+                  daysRemaining: plan?.daysRemaining ?? 0,
+                  trackStatus: plan?.trackStatusLabel ?? 'On track',
                 ),
                 const SizedBox(height: 12),
                 FilledButton.icon(
@@ -353,6 +421,24 @@ class _DailyPlannerTabState extends State<DailyPlannerTab> {
                     style: const TextStyle(color: Colors.red, height: 1.4),
                   ),
                 ],
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: _profile == null
+                      ? null
+                      : () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => DiagnosticFlowScreen(
+                                profile: _profile!,
+                              ),
+                            ),
+                          );
+                        },
+                  icon: const Icon(Icons.quiz_outlined),
+                  label: const Text('Re-diagnostic / compare scores'),
+                ),
+                const SizedBox(height: 8),
+                _WeeklyReviewCard(weekly: weekly),
                 const SizedBox(height: 16),
                 if (plan == null)
                   const EmptyState(
@@ -399,7 +485,7 @@ class _DailyPlannerTabState extends State<DailyPlannerTab> {
                     ),
                   const SizedBox(height: 8),
                   Text(
-                    'Remaining tasks',
+                    "Today's plan",
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
                           fontWeight: FontWeight.w700,
                         ),
@@ -520,20 +606,24 @@ class _PrefsCard extends StatelessWidget {
     required this.targetExam,
     required this.examDate,
     required this.hours,
+    required this.durationDays,
     required this.prefsReady,
     required this.onExamChanged,
     required this.onHoursChanged,
     required this.onHoursChangeEnd,
+    required this.onDurationChanged,
     required this.onPickDate,
   });
 
   final String? targetExam;
   final DateTime? examDate;
   final double hours;
+  final int durationDays;
   final bool prefsReady;
   final ValueChanged<String?> onExamChanged;
   final ValueChanged<double> onHoursChanged;
   final ValueChanged<double> onHoursChangeEnd;
+  final ValueChanged<int> onDurationChanged;
   final VoidCallback onPickDate;
 
   @override
@@ -562,15 +652,13 @@ class _PrefsCard extends StatelessWidget {
               style: TextStyle(color: AppColors.textSecondary),
             ),
             const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
+            TargetExamSelectField(
               key: ValueKey(targetExam),
-              initialValue: examItems.contains(targetExam) ? targetExam : null,
-              decoration: const InputDecoration(labelText: 'Target exam'),
-              items: [
-                for (final e in examItems)
-                  DropdownMenuItem(value: e, child: Text(e)),
-              ],
-              onChanged: prefsReady ? onExamChanged : null,
+              label: 'Target exam',
+              requiredField: false,
+              value: examItems.contains(targetExam) ? targetExam : null,
+              enabled: prefsReady,
+              onChanged: (id) => onExamChanged(id),
             ),
             const SizedBox(height: 10),
             ListTile(
@@ -579,12 +667,31 @@ class _PrefsCard extends StatelessWidget {
               title: const Text('Exam date'),
               subtitle: Text(
                 examDate == null
-                    ? 'Optional — closer dates increase revision'
+                    ? 'Optional — or pick a 30/60/90/120/180 day duration'
                     : DailyStudyPlan.dateKeyFor(examDate),
               ),
               trailing: const Icon(Icons.chevron_right_rounded),
               onTap: onPickDate,
             ),
+            if (examDate == null) ...[
+              const SizedBox(height: 8),
+              const Text('Preparation duration (if no exam date)'),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 8,
+                children: [
+                  for (final days in kPreparationDurationDayOptions)
+                    ChoiceChip(
+                      label: Text('$days days'),
+                      selected: durationDays == days,
+                      onSelected: prefsReady
+                          ? (_) => onDurationChanged(days)
+                          : null,
+                    ),
+                ],
+              ),
+            ],
+            const SizedBox(height: 10),
             Text('Daily study hours: ${hours.toStringAsFixed(1)}'),
             Slider(
               value: hours,
@@ -609,6 +716,11 @@ class _ProgressCard extends StatelessWidget {
     required this.remaining,
     required this.completed,
     required this.weekDays,
+    this.syllabusPercent = 0,
+    this.topicsCompleted = 0,
+    this.topicsTotal = 0,
+    this.daysRemaining = 0,
+    this.trackStatus = 'On track',
   });
 
   final double daily;
@@ -616,6 +728,11 @@ class _ProgressCard extends StatelessWidget {
   final int remaining;
   final int completed;
   final int weekDays;
+  final double syllabusPercent;
+  final int topicsCompleted;
+  final int topicsTotal;
+  final int daysRemaining;
+  final String trackStatus;
 
   @override
   Widget build(BuildContext context) {
@@ -652,6 +769,19 @@ class _ProgressCard extends StatelessWidget {
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Syllabus Progress: ${syllabusPercent.round()}%  ·  '
+                'Topics Completed: $topicsCompleted / $topicsTotal  ·  '
+                'Days Remaining: $daysRemaining  ·  $trackStatus',
+                style: const TextStyle(
+                  color: AppColors.textSecondary,
+                  height: 1.35,
+                ),
+              ),
             ),
             const SizedBox(height: 12),
             ClipRRect(
@@ -741,6 +871,7 @@ class _TaskCard extends StatelessWidget {
               ),
               subtitle: Text(
                 '${task.subject} · ${task.durationMinutes} min · ${task.priorityLabel}'
+                ' · ${task.statusLabel}'
                 '${task.reason.isEmpty ? '' : ' · ${task.reason}'}',
               ),
               onTap: onOpen,
@@ -762,6 +893,55 @@ class _TaskCard extends StatelessWidget {
                     child: const Text('Complete'),
                   ),
                 ],
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _WeeklyReviewCard extends StatelessWidget {
+  const _WeeklyReviewCard({required this.weekly});
+
+  final WeeklyPlannerProgress weekly;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Weekly review',
+              style: TextStyle(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Tasks completed: ${weekly.completedTasks}/${weekly.totalTasks}  ·  '
+              'MCQs: ${weekly.mcqCompleted}  ·  PYQs: ${weekly.pyqCompleted}  ·  '
+              'Missed: ${weekly.missedTasks}',
+              style: const TextStyle(
+                color: AppColors.textSecondary,
+                height: 1.35,
+              ),
+            ),
+            if (weekly.weakSubjects.isNotEmpty)
+              Text(
+                'Weak: ${weekly.weakSubjects.join(', ')}',
+                style: const TextStyle(color: AppColors.textSecondary),
+              ),
+            if (weekly.strongSubjects.isNotEmpty)
+              Text(
+                'Strong: ${weekly.strongSubjects.join(', ')}',
+                style: const TextStyle(color: AppColors.textSecondary),
+              ),
+            if (weekly.nextPriorities.isNotEmpty)
+              Text(
+                'Next week: ${weekly.nextPriorities.join(', ')}',
+                style: const TextStyle(color: AppColors.textSecondary),
               ),
           ],
         ),

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:mpsc_combine_ai/models/chapter_item.dart';
+import 'package:mpsc_combine_ai/models/exam_item.dart';
 import 'package:mpsc_combine_ai/models/note_item.dart';
 import 'package:mpsc_combine_ai/models/smart_trick_item.dart';
 import 'package:mpsc_combine_ai/models/subject_item.dart';
@@ -111,7 +112,9 @@ class _RevisionPack {
 }
 
 Future<List<_RevisionPack>> _loadRevisionPacks() async {
-  final subjects = await notesRepository.watchPublishedSubjects().first;
+  final subjects = await notesRepository
+      .watchPublishedSubjects(examId: kGroupBCombinedExamId)
+      .first;
   final packs = <_RevisionPack>[];
   for (final subject in subjects) {
     final chapters = await notesRepository.watchPublishedChapters(subject.id).first;

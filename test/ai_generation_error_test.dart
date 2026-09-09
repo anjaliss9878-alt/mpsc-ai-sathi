@@ -21,4 +21,24 @@ void main() {
     expect(classifyAiGenerationFailure('Gemini did not return a JSON object'),
         'response parsing error');
   });
+
+  test('classroom errors name the failed stage, not generic video failure', () {
+    expect(classifyClassroomPipelineStage('network error'), 'lesson generation');
+    expect(
+      classroomPipelineError('network error'),
+      'Lesson generation failed — Retry (network error)',
+    );
+    expect(
+      classroomPipelineError('XMLHttpRequest error'),
+      isNot(contains('Video generation failed')),
+    );
+    expect(
+      classroomPipelineError('scene generation: slides empty'),
+      startsWith('Scene generation failed'),
+    );
+    expect(
+      classroomPipelineError('Gemini TTS failed', stage: 'tts'),
+      startsWith('TTS failed'),
+    );
+  });
 }

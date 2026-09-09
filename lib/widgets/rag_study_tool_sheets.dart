@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:mpsc_combine_ai/models/rag_study_pack.dart';
+import 'package:mpsc_combine_ai/models/test_result.dart';
+import 'package:mpsc_combine_ai/services/test_result_repository.dart';
 import 'package:mpsc_combine_ai/theme/app_colors.dart';
+import 'package:mpsc_combine_ai/utils/pyq_authenticity.dart';
 import 'package:mpsc_combine_ai/widgets/rag_citation_block.dart';
 
 Future<void> showRagStudySheet({
@@ -61,11 +64,11 @@ class RagSummaryView extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
       children: [
         _MdSection(title: 'Detailed Summary', body: summary.detailed),
-        _MdSection(title: 'Short Notes', body: summary.shortNotes),
-        _MdSection(title: '5-Minute Revision', body: summary.fiveMinuteRevision),
+        _MdSection(title: 'Core Concept', body: summary.shortNotes),
+        _MdSection(title: '2-Minute Revision', body: summary.fiveMinuteRevision),
         _BulletSection(title: 'Important Facts', items: summary.importantFacts),
-        _BulletSection(title: 'Exam Points', items: summary.examPoints),
-        _BulletSection(title: 'Common Mistakes', items: summary.commonMistakes),
+        _BulletSection(title: 'Exam Focus', items: summary.examPoints),
+        _BulletSection(title: 'Confusing points / traps', items: summary.commonMistakes),
         RagCitationBlock(citations: summary.citations),
       ],
     );
@@ -73,9 +76,18 @@ class RagSummaryView extends StatelessWidget {
 }
 
 class RagMcqView extends StatefulWidget {
-  const RagMcqView({super.key, required this.questions});
+  const RagMcqView({
+    super.key,
+    required this.questions,
+    this.title = 'Study Content MCQ',
+    this.subjectId = '',
+    this.chapterId = '',
+  });
 
   final List<RagGeneratedMcq> questions;
+  final String title;
+  final String subjectId;
+  final String chapterId;
 
   @override
   State<RagMcqView> createState() => _RagMcqViewState();
@@ -84,6 +96,44 @@ class RagMcqView extends StatefulWidget {
 class _RagMcqViewState extends State<RagMcqView> {
   int _index = 0;
   int? _picked;
+  late List<int?> _selected;
+  bool _saved = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _selected = List<int?>.filled(widget.questions.length, null);
+  }
+
+  void _pick(int i) {
+    setState(() {
+      _picked = i;
+      _selected[_index] = i;
+    });
+    _persistIfComplete();
+  }
+
+  Future<void> _persistIfComplete() async {
+    if (_saved) return;
+    if (_selected.any((s) => s == null)) return;
+    _saved = true;
+    await TestResultRepository.instance.savePracticeAttempt(
+      title: widget.title,
+      kind: 'mcq',
+      subjectId: widget.subjectId,
+      chapterId: widget.chapterId,
+      questionResults: [
+        for (var i = 0; i < widget.questions.length; i++)
+          QuestionResult(
+            question: widget.questions[i].question,
+            options: widget.questions[i].options,
+            correctIndex: widget.questions[i].correctIndex,
+            selectedIndex: _selected[i],
+            explanation: widget.questions[i].explanation,
+          ),
+      ],
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -117,7 +167,7 @@ class _RagMcqViewState extends State<RagMcqView> {
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
             child: OutlinedButton(
-              onPressed: () => setState(() => _picked = i),
+              onPressed: () => _pick(i),
               style: OutlinedButton.styleFrom(
                 alignment: Alignment.centerLeft,
                 foregroundColor: _optionColor(q, i),
@@ -145,7 +195,7 @@ class _RagMcqViewState extends State<RagMcqView> {
                   ? null
                   : () => setState(() {
                         _index--;
-                        _picked = null;
+                        _picked = _selected[_index];
                       }),
               child: const Text('Previous'),
             ),
@@ -155,7 +205,7 @@ class _RagMcqViewState extends State<RagMcqView> {
                   ? null
                   : () => setState(() {
                         _index++;
-                        _picked = null;
+                        _picked = _selected[_index];
                       }),
               child: const Text('Next'),
             ),
@@ -379,24 +429,23 @@ class RagPyqView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (items.isEmpty) {
-      return const _EmptyHint('निवडलेल्या स्रोतांमध्ये संबंधित PYQ उपलब्ध नाहीत.');
+      return const _EmptyHint(
+        '$kAiPyqConnectionDisclaimer\nसंबंधित AI/syllabus connections उपलब्ध नाहीत.',
+      );
     }
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
       children: [
+        const Text(
+          kAiPyqConnectionDisclaimer,
+          style: TextStyle(
+            fontWeight: FontWeight.w800,
+            color: AppColors.navy,
+            height: 1.4,
+          ),
+        ),
+        const SizedBox(height: 12),
         for (final p in items) ...[
-          if (p.year != null || p.examName.isNotEmpty)
-            Text(
-              [
-                if (p.year != null) '${p.year}',
-                if (p.examName.isNotEmpty) p.examName,
-              ].join(' · '),
-              style: const TextStyle(
-                fontWeight: FontWeight.w700,
-                color: AppColors.textSecondary,
-              ),
-            ),
-          const SizedBox(height: 6),
           Text(
             p.question,
             style: const TextStyle(fontWeight: FontWeight.w700, height: 1.4),

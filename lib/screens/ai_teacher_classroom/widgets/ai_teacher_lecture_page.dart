@@ -42,7 +42,12 @@ class AiTeacherLecturePage extends StatelessWidget {
                 activeBulletIndex: engine.activeBulletIndex,
                 speed: engine.playbackSpeed,
                 muted: engine.muted,
-                onPlayPause: engine.togglePlayPause,
+                controlsEnabled:
+                    engine.hasContinuousAudio || engine.isPlaying || engine.isPaused,
+                onPlayPause: () {
+                  debugPrint('[TTS] buttonPressed=true');
+                  engine.togglePlayPause();
+                },
                 onReplay: engine.replay,
                 onStop: () {
                   engine.stop();

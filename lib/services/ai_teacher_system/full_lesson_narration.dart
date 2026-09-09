@@ -4,7 +4,7 @@ import 'package:mpsc_combine_ai/services/ai_teacher_system/generated_lesson.dart
 import 'package:mpsc_combine_ai/services/ai_teacher_system/speakable_marathi.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/subject_teacher.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/teaching_sequence.dart';
-import 'package:mpsc_combine_ai/services/elevenlabs_tts_service.dart';
+import 'package:mpsc_combine_ai/services/ai_tts_service.dart';
 
 /// One continuous lesson narration plus slide/beat timeline.
 class LessonAudioBundle {
@@ -81,13 +81,12 @@ int slideIndexForAudioSpan({
       .clamp(0, slideCount - 1);
 }
 
-/// Full-lesson Marathi TTS via ElevenLabs — one continuous file, never
-/// sentence-by-sentence Google/Gemini clips.
+/// Full-lesson Marathi TTS via Google Gemini (`/ai/tts`) — one continuous file.
 class FullLessonNarrationService {
-  FullLessonNarrationService({ElevenLabsTtsService? elevenLabs})
-      : _eleven = elevenLabs ?? elevenLabsTtsService;
+  FullLessonNarrationService({AiTtsService? tts})
+      : _tts = tts ?? aiTtsService;
 
-  final ElevenLabsTtsService _eleven;
+  final AiTtsService _tts;
 
   /// Approved Gemini lesson text only — slide narration, never UI chrome.
   List<String> lessonNarrationLines(GeneratedLesson lesson) {
@@ -96,13 +95,24 @@ class FullLessonNarrationService {
 
   /// Spoken lines with an explicit slide mapping (not spanIndex == beatIndex).
   List<LessonSpeakCue> lessonSpeakCues(GeneratedLesson lesson) {
-    final segs = narrationSegmentsFor(lesson);
-    final maxSlide = lesson.slides.isEmpty ? 0 : lesson.slides.length - 1;
+    if (lesson.slides.isEmpty) {
+      final cues = <LessonSpeakCue>[];
+      for (var i = 0; i < lesson.script.length; i++) {
+        final text = facultyNarration(stripUnspeakableLessonText(lesson.script[i]));
+        if (text.trim().isEmpty) continue;
+        cues.add(LessonSpeakCue(text: text, slideIndex: i));
+      }
+      return cues;
+    }
     final cues = <LessonSpeakCue>[];
-    for (var i = 0; i < segs.length; i++) {
-      final text = facultyNarration(stripUnspeakableLessonText(segs[i]));
+    for (var i = 0; i < lesson.slides.length; i++) {
+      final slide = lesson.slides[i];
+      final raw = slide.narration.trim().isNotEmpty
+          ? slide.narration.trim()
+          : (slide.bullets.isNotEmpty ? slide.bullets.join('. ') : slide.title);
+      final text = facultyNarration(stripUnspeakableLessonText(raw));
       if (text.trim().isEmpty) continue;
-      cues.add(LessonSpeakCue(text: text, slideIndex: i.clamp(0, maxSlide)));
+      cues.add(LessonSpeakCue(text: text, slideIndex: i));
     }
     return cues;
   }
@@ -151,7 +161,7 @@ class FullLessonNarrationService {
       texts.where((s) => s.trim().isNotEmpty).join(' '),
     );
     if (script.trim().isEmpty) {
-      throw const ElevenLabsTtsException('Empty lesson script');
+      throw const AiTtsException('Empty lesson script', statusCode: 400);
     }
 
     final indices = slideIndices.length == texts.length
@@ -164,10 +174,10 @@ class FullLessonNarrationService {
         detectMpscTeachingSubject(topic ?? script, hint: topic);
 
     debugPrint(
-      '[FullLessonTTS] ElevenLabs subject=${style.id} chars=${script.length}',
+      '[FullLessonTTS] Gemini /ai/tts subject=${style.id} chars=${script.length}',
     );
 
-    final clip = await _eleven.synthesizeLesson(
+    final clip = await _tts.synthesizeLesson(
       text: script,
       subject: style,
     );
@@ -201,6 +211,41 @@ class FullLessonNarrationService {
 int _slideIndexAt(List<int>? slideIndices, int i) {
   if (slideIndices != null && i < slideIndices.length) return slideIndices[i];
   return i;
+}
+
+/// Picks the audio span for [position]. Sequential spans stay 1:1 with scenes.
+/// The last span remains active until narration ends.
+int spanIndexAtPosition({
+  required List<BeatAudioSpan> spans,
+  required Duration position,
+}) {
+  if (spans.isEmpty) return 0;
+  if (position <= Duration.zero) return 0;
+  for (var i = 0; i < spans.length; i++) {
+    final isLast = i == spans.length - 1;
+    if (isLast || position < spans[i].end) return i;
+  }
+  return spans.length - 1;
+}
+
+int slideIndexAtAudioProgress({
+  required List<BeatAudioSpan> spans,
+  required double progress,
+  required Duration total,
+  required int slideCount,
+}) {
+  if (spans.isEmpty || slideCount <= 0) return 0;
+  final ms = total.inMilliseconds <= 0 ? 0 : total.inMilliseconds;
+  final pos = Duration(
+    milliseconds: (progress.clamp(0.0, 1.0) * ms).round(),
+  );
+  final span = spans[spanIndexAtPosition(spans: spans, position: pos)];
+  return slideIndexForAudioSpan(
+    spanSlideIndex: span.slideIndex,
+    spanIndex: span.beatIndex,
+    spanCount: spans.length,
+    slideCount: slideCount,
+  );
 }
 
 List<BeatAudioSpan> beatSpansFor({

@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:mpsc_combine_ai/models/chat_message.dart';
 import 'package:mpsc_combine_ai/services/ai_backend_base.dart';
@@ -56,26 +57,16 @@ abstract class AiTeacherService {
   });
 }
 
-/// [AiTeacherService] implementation backed by the Google Gemini
-/// `generateContent` REST API.
-///
-/// Configuration is supplied entirely via compile-time environment values
-/// (`--dart-define`) — no key is hardcoded and none is bundled with the app:
-///
-/// ```
-/// flutter run -d chrome --dart-define=AI_API_KEY=your_gemini_api_key
-/// ```
-///
-/// Optionally override the model with `--dart-define=AI_MODEL=gemini-2.0-flash`.
+/// Flutter Web / Student app always calls server `/ai/doubt`.
+/// The local classroom worker may pass [apiKey] in-process (never dart-define).
 class GeminiAiTeacherService implements AiTeacherService {
   GeminiAiTeacherService({http.Client? client, String? apiKey})
       : _client = client ?? http.Client(),
-        _apiKey = (apiKey ?? _envKey).trim();
+        _apiKey = (apiKey ?? '').trim();
 
   final http.Client _client;
   final String _apiKey;
 
-  static const String _envKey = String.fromEnvironment('AI_API_KEY');
   static const String _model = String.fromEnvironment(
     'AI_MODEL',
     defaultValue: 'gemini-flash-latest',
@@ -91,7 +82,7 @@ class GeminiAiTeacherService implements AiTeacherService {
     required String userMessage,
     String? extraContext,
   }) async {
-    if (_apiKey.isEmpty) {
+    if (kIsWeb || _apiKey.isEmpty) {
       return _sendViaBackend(
         history: history,
         userMessage: userMessage,
@@ -303,14 +294,6 @@ _(Turn number: $turnNumber)_
   }
 }
 
-// --- Single configuration point ------------------------------------------
-//
-// Set `AI_API_KEY` via `--dart-define=AI_API_KEY=your_gemini_api_key` (see
-// [GeminiAiTeacherService]'s doc comment for the full command) to switch
-// the whole app over to the real Gemini backend.
-//
-// Leave it unset — the default — to keep using [MockAiTeacherService].
-// Nothing else needs to change either way: [AiTeacherScreen] only ever
-// depends on the [AiTeacherService] interface below, never on a concrete
-// implementation.
+// Student/Web: GeminiAiTeacherService calls /ai/doubt (local worker or Netlify).
+// The classroom worker may construct GeminiAiTeacherService(apiKey: ...) in-process.
 final AiTeacherService aiTeacherService = GeminiAiTeacherService();

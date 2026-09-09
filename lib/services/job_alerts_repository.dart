@@ -27,13 +27,18 @@ class JobAlertsRepository {
   }
 
   Stream<List<JobAlert>> watchPublished() {
-    return watchAll().map(
-      (list) => list.where((a) => a.published).toList(),
-    );
+    return _ref.where('published', isEqualTo: true).snapshots().map((snap) {
+      final list = snap.docs
+          .map((d) => JobAlert.fromMap(d.data(), d.id))
+          .where((a) => a.published)
+          .toList()
+        ..sort(_compare);
+      return list;
+    });
   }
 
   Future<List<JobAlert>> getPublished() async {
-    final snap = await _ref.get();
+    final snap = await _ref.where('published', isEqualTo: true).get();
     final list = snap.docs
         .map((d) => JobAlert.fromMap(d.data(), d.id))
         .where((a) => a.published)

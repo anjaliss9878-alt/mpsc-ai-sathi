@@ -27,22 +27,31 @@ void main() {
     expect(detectMpscTeachingSubject('संसद'), MpscTeachingSubject.polity);
     expect(detectMpscTeachingSubject('मान्सून'), MpscTeachingSubject.geography);
     expect(detectMpscTeachingSubject('1857 चा उठाव'), MpscTeachingSubject.history);
-  });
-
-  test('five subject teachers use distinct ElevenLabs voices and tones', () {
-    final ids = {
-      for (final s in MpscTeachingSubject.values) s.elevenLabsVoiceId,
-    };
-    expect(ids, hasLength(5));
     expect(
-      MpscTeachingSubject.polity.elevenLabsVoiceSettings['speed'],
-      isNot(MpscTeachingSubject.economics.elevenLabsVoiceSettings['speed']),
+      detectMpscTeachingSubject('Coding Decoding'),
+      MpscTeachingSubject.science,
     );
     expect(
-      MpscTeachingSubject.history.elevenLabsVoiceSettings['style'] as num,
-      greaterThan(
-        MpscTeachingSubject.polity.elevenLabsVoiceSettings['style'] as num,
+      detectMpscTeachingSubject(
+        'Blood relations',
+        hint: 'Intelligence Test & Arithmetic',
       ),
+      MpscTeachingSubject.science,
+    );
+    expect(
+      detectMpscTeachingSubject('An unclassified MPSC factoid xyz'),
+      MpscTeachingSubject.science,
+    );
+  });
+
+  test('subject teachers keep distinct Marathi classroom styles', () {
+    expect(
+      MpscTeachingSubject.polity.classroomHook,
+      isNot(MpscTeachingSubject.economics.classroomHook),
+    );
+    expect(
+      MpscTeachingSubject.history.classroomHook,
+      isNot(MpscTeachingSubject.polity.classroomHook),
     );
     expect(lessonSystemPrompt(MpscTeachingSubject.polity), contains('POLITY'));
     expect(lessonSystemPrompt(MpscTeachingSubject.history), contains('HISTORY'));

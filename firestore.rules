@@ -9,13 +9,23 @@ rules_version = '2';
 // inputs) and write the profile document (block / assign courses). Admins
 // cannot write a student's progress/plan/test documents.
 //
-// Content collections (subjects/chapters/notes/mcqs/pyqs/tests/
-// currentAffairs/jobAlerts/videos/liveClasses) are readable by any signed-in student
-// (Admin Panel + Student App share the same top-level collections — there is
-// no separate student copy). Writes are admin-only (`admin/{uid}` or legacy
-// `admins/{uid}`). Draft vs published visibility is enforced in the app
-// (student streams filter `published != false`); rules stay signed-in-readable
-// so collection listeners never fail with permission-denied for students.
+// Diagnostic submit (Student app) writes only owner paths:
+//   students/{uid}
+//   students/{uid}/diagnosticAttempts/{attemptId}
+//   students/{uid}/testAttempts/{attemptId}
+//   students/{uid}/studyPlans/{planId}
+//
+// Content collections (subjects/chapters/tests/currentAffairs/jobAlerts/
+// videos/liveClasses/…) are readable by any signed-in student unless a
+// collection has its own student-visible rule below. Writes are admin-only
+// (`admin/{uid}` or legacy `admins/{uid}`).
+//
+// notes / mcqs / pyqs / flashcards / smartTricks / tests / currentAffairs /
+// aiTeacherContent: students may read only student-visible docs
+// (`published == true` or omitted, and `status == 'published'` or omitted).
+// Draft / underReview / approved / unpublished / published==false are
+// admin-read only. Student listeners should query `published == true`.
+// jobAlerts: students may read when published is missing or true (no status).
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -43,6 +53,23 @@ service cloud.firestore {
       return isSignedIn()
         && resource.data.published == true
         && resource.data.status == 'Ready';
+    }
+
+    // Notes, MCQs, PYQs, flashcards, smartTricks, tests, currentAffairs,
+    // aiTeacherContent: same student-visible contract as the Dart models
+    // (`published && status == published`). Legacy docs omit one or both
+    // fields and stay readable (app defaults missing published/status to
+    // published). Draft workflow statuses are never student-readable.
+    function isStudentReadableWorkflowDoc() {
+      return isSignedIn()
+        && (!('published' in resource.data) || resource.data.published == true)
+        && (!('status' in resource.data) || resource.data.status == 'published');
+    }
+
+    // Job alerts have a published bool only (no workflow status field).
+    function isStudentReadablePublishedDoc() {
+      return isSignedIn()
+        && (!('published' in resource.data) || resource.data.published == true);
     }
 
     function ragSourcePath(sourceId) {
@@ -113,6 +140,10 @@ service cloud.firestore {
         allow read: if isOwner(uid) || isAdmin();
         allow write: if isOwner(uid);
       }
+      match /diagnosticAttempts/{attemptId} {
+        allow read: if isOwner(uid) || isAdmin();
+        allow write: if isOwner(uid);
+      }
       match /certificates/{certId} {
         allow read: if isOwner(uid) || isAdmin();
         allow write: if isOwner(uid);
@@ -174,44 +205,44 @@ service cloud.firestore {
     }
 
     match /notes/{noteId} {
-      allow read: if isSignedIn();
+      allow read: if isAdmin() || isStudentReadableWorkflowDoc();
       allow write: if isAdmin();
     }
 
     match /mcqs/{mcqId} {
-      allow read: if isSignedIn();
+      allow read: if isAdmin() || isStudentReadableWorkflowDoc();
       allow write: if isAdmin();
     }
 
     match /pyqs/{pyqId} {
-      allow read: if isSignedIn();
+      allow read: if isAdmin() || isStudentReadableWorkflowDoc();
       allow write: if isAdmin();
     }
 
     match /flashcards/{cardId} {
-      allow read: if isSignedIn();
+      allow read: if isAdmin() || isStudentReadableWorkflowDoc();
       allow write: if isAdmin();
     }
 
     match /smartTricks/{trickId} {
-      allow read: if isSignedIn();
+      allow read: if isAdmin() || isStudentReadableWorkflowDoc();
       allow write: if isAdmin();
     }
 
     match /tests/{testId} {
-      allow read: if isSignedIn();
+      allow read: if isAdmin() || isStudentReadableWorkflowDoc();
       allow write: if isAdmin();
     }
 
     match /currentAffairs/{itemId} {
-      allow read: if isSignedIn();
+      allow read: if isAdmin() || isStudentReadableWorkflowDoc();
       allow write: if isAdmin();
     }
 
-    // Admin-authored job / exam alerts. Signed-in students may read
-    // (the app shows only published docs). Writes are admin-only.
+    // Admin-authored job / exam alerts. Students read published (or
+    // legacy docs that omit published). Writes are admin-only.
     match /jobAlerts/{alertId} {
-      allow read: if isSignedIn();
+      allow read: if isAdmin() || isStudentReadablePublishedDoc();
       allow write: if isAdmin();
     }
 
@@ -248,7 +279,7 @@ service cloud.firestore {
     // Admin-authored AI Teacher lessons (script/slides/quiz/notes), looked
     // up by keyword before falling back to live Gemini generation.
     match /aiTeacherContent/{contentId} {
-      allow read: if isSignedIn();
+      allow read: if isAdmin() || isStudentReadableWorkflowDoc();
       allow write: if isAdmin();
     }
 
@@ -259,6 +290,25 @@ service cloud.firestore {
       allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
       allow update: if isSignedIn() && (
         resource.data.uid == request.auth.uid || isAdmin()
+      );
+      allow delete: if isAdmin() || (
+        isSignedIn() && resource.data.uid == request.auth.uid
+      );
+    }
+
+    // Student-submitted AI Study Content packs. Never student-visible notes.
+    // Admins copy them into `notes` as draft. `published` must stay false.
+    match /studyPacks/{packId} {
+      allow read: if isSignedIn() && (
+        resource.data.uid == request.auth.uid || isAdmin()
+      );
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.published != true;
+      allow update: if isAdmin() || (
+        isSignedIn()
+        && resource.data.uid == request.auth.uid
+        && request.resource.data.published != true
       );
       allow delete: if isAdmin() || (
         isSignedIn() && resource.data.uid == request.auth.uid

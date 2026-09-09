@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:mpsc_combine_ai/models/ai_lesson.dart';
 import 'package:mpsc_combine_ai/models/daily_study_plan.dart';
+import 'package:mpsc_combine_ai/models/exam_item.dart';
 import 'package:mpsc_combine_ai/models/subject_item.dart';
 import 'package:mpsc_combine_ai/screens/ai_teacher_classroom/ai_teacher_classroom_screen.dart';
 import 'package:mpsc_combine_ai/screens/mcq_practice_screen.dart';
 import 'package:mpsc_combine_ai/screens/revision/revision_hub_screen.dart';
+import 'package:mpsc_combine_ai/screens/study_content/study_content_screen.dart';
 import 'package:mpsc_combine_ai/screens/study_planner_screen.dart';
 import 'package:mpsc_combine_ai/screens/syllabus/syllabus_tracker_screen.dart';
 import 'package:mpsc_combine_ai/screens/topic_list_screen.dart';
@@ -69,6 +71,19 @@ class HomeUpgradeSections extends StatelessWidget {
                 ),
               ),
             ],
+          ),
+        ),
+        Padding(
+          padding: EdgeInsets.fromLTRB(horizontalPadding, 10, horizontalPadding, 0),
+          child: _MiniActionCard(
+            icon: Icons.auto_stories_rounded,
+            title: 'AI Study Content',
+            subtitle: 'Topic notes from approved books, then MCQ / PYQ / revision',
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => const StudyContentScreen(),
+              ),
+            ),
           ),
         ),
         if (uid != null)
@@ -160,7 +175,9 @@ class HomeUpgradeSections extends StatelessWidget {
           Padding(
             padding: EdgeInsets.fromLTRB(horizontalPadding, 10, horizontalPadding, 0),
             child: StreamBuilder(
-              stream: notesRepository.watchPublishedSubjects(),
+              stream: notesRepository.watchPublishedSubjects(
+                examId: kGroupBCombinedExamId,
+              ),
               builder: (context, subSnap) {
                 if (subSnap.hasError) return const SizedBox.shrink();
                 final subjects = subSnap.data ?? const <SubjectItem>[];

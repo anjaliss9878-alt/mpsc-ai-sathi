@@ -8,11 +8,11 @@ import 'package:mpsc_combine_ai/models/exam_item.dart';
 import 'package:mpsc_combine_ai/models/rag_source.dart';
 import 'package:mpsc_combine_ai/rag/rag_domain.dart';
 import 'package:mpsc_combine_ai/rag/rag_exceptions.dart';
+import 'package:mpsc_combine_ai/rag/rag_management.dart';
 import 'package:mpsc_combine_ai/rag/rag_text.dart';
 import 'package:mpsc_combine_ai/services/audit_log_repository.dart';
 import 'package:mpsc_combine_ai/services/auth_service.dart';
 import 'package:mpsc_combine_ai/services/rag_processing_service.dart';
-import 'package:mpsc_combine_ai/services/rag_source_repository.dart';
 import 'package:mpsc_combine_ai/services/storage_service.dart';
 import 'package:mpsc_combine_ai/theme/app_colors.dart';
 
@@ -49,15 +49,16 @@ class _AdminRagSourceFormScreenState extends State<AdminRagSourceFormScreen> {
   late ContentIndexSelection _index = ContentIndexSelection(
     examId: widget.existing?.examId.isNotEmpty == true
         ? widget.existing!.examId
-        : kDefaultExamId,
+        : kGroupBCombinedExamId,
     subjectId: widget.existing?.subjectId ?? '',
     chapterId: widget.existing?.chapterId ?? '',
     topicId: widget.existing?.topicId ?? '',
     subjectTitle: widget.existing?.subject ?? '',
     chapterTitle: widget.existing?.chapter ?? '',
   );
-  late bool _published = widget.existing?.published ?? false;
+  late bool _published = widget.existing?.published ?? true;
   late String _fileUrl = widget.existing?.fileUrl ?? '';
+  late String _storagePath = widget.existing?.storagePath ?? '';
   String _fileName = '';
   late bool _ownsFile = widget.existing?.ownsFile ?? false;
   bool _saving = false;
@@ -95,7 +96,7 @@ class _AdminRagSourceFormScreenState extends State<AdminRagSourceFormScreen> {
       _progress = 0;
     });
     try {
-      final url = await storageService.uploadBytes(
+      final uploaded = await storageService.uploadBytesDetailed(
         folder: 'ragSources',
         fileName: file.name,
         bytes: bytes,
@@ -105,7 +106,8 @@ class _AdminRagSourceFormScreenState extends State<AdminRagSourceFormScreen> {
       );
       if (!mounted) return;
       setState(() {
-        _fileUrl = url;
+        _fileUrl = uploaded.url;
+        _storagePath = uploaded.path;
         _fileName = file.name;
         _ownsFile = true;
         if (_title.text.trim().isEmpty) {
@@ -166,7 +168,7 @@ class _AdminRagSourceFormScreenState extends State<AdminRagSourceFormScreen> {
         chapterId: chapterId,
         exam: _exam.text.trim().isEmpty ? kMpscDefaultExam : _exam.text.trim(),
         fileUrl: _fileUrl.trim(),
-        storagePath: '',
+        storagePath: _storagePath,
         uploadedBy: widget.existing?.uploadedBy.isNotEmpty == true
             ? widget.existing!.uploadedBy
             : uid,
@@ -178,21 +180,20 @@ class _AdminRagSourceFormScreenState extends State<AdminRagSourceFormScreen> {
         linkedCollection: _linkedCollection(_type),
         linkedId: _linkedId.text.trim(),
         ownsFile: _ownsFile,
-        examId: _index.examId.isNotEmpty ? _index.examId : kDefaultExamId,
-        topicId: _index.topicId,
+        examId: _index.examId.isNotEmpty ? _index.examId : kGroupBCombinedExamId,
+        topicId: _index.topicId.isNotEmpty ? _index.topicId : chapterId,
         contentType: _contentTypeFor(_type, _domain),
         ragDomain: ragDomainToString(_domain),
       );
 
-      final id = draft.id.isEmpty
-          ? await ragSourceRepository.create(draft)
-          : draft.id;
-      if (draft.id.isNotEmpty) {
-        await ragSourceRepository.update(draft);
+      final issues = ragIndexMetadataIssues(draft);
+      if (issues.isNotEmpty) {
+        showAdminMessage(context, issues.first.message);
+        return;
       }
 
-      await ragProcessingService.processSource(
-        id,
+      await ragProcessingService.saveAndEnqueueProcessing(
+        draft,
         inlineText: _type == RagSourceType.text ? _text.text : null,
         force: widget.existing != null,
       );
@@ -202,7 +203,10 @@ class _AdminRagSourceFormScreenState extends State<AdminRagSourceFormScreen> {
         module: 'RAG Management',
         targetLabel: _title.text.trim(),
       );
-      if (mounted) Navigator.of(context).pop();
+      if (mounted) {
+        showAdminMessage(context, 'Indexing in progress');
+        Navigator.of(context).pop();
+      }
     } catch (e) {
       if (mounted) showAdminError(context, RagException.fromError(e));
     } finally {
@@ -264,12 +268,12 @@ class _AdminRagSourceFormScreenState extends State<AdminRagSourceFormScreen> {
       title: widget.existing == null ? 'Add knowledge source' : 'Edit knowledge source',
       isSaving: _saving || _uploading,
       canSave: !_uploading,
-      saveLabel: _saving ? 'Processing…' : 'Save & process',
+      saveLabel: _saving ? 'Saving…' : 'Save & process',
       onSave: _save,
       children: [
         const Text(
-          'Processing extracts text, chunks it, and generates embeddings on the '
-          'secure backend. The source stays Failed until that finishes.',
+          'Save stores the PDF and subject/chapter/topic metadata, then indexes '
+          'in the background. Status shows Processing until Ready.',
           style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
         ),
         const AdminSectionLabel(label: 'Content index'),

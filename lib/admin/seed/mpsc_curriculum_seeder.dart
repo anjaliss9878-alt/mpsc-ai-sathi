@@ -13,6 +13,7 @@ Future<String> seedMpscCurriculumStructure({
   NotesRepository? repository,
 }) async {
   final repo = repository ?? notesRepository;
+  await repo.ensureMpscGroupBCombinedStructure();
   var subjectsCreated = 0;
   var subjectsUpdated = 0;
   var chaptersCreated = 0;

@@ -82,7 +82,6 @@ class GoogleCloudTtsService {
   static const String _googleTtsKey =
       String.fromEnvironment('GOOGLE_TTS_API_KEY');
   static const String _ttsKey = String.fromEnvironment('TTS_API_KEY');
-  static const String _aiKey = String.fromEnvironment('AI_API_KEY');
   static const String _accessToken = String.fromEnvironment('TTS_ACCESS_TOKEN');
   static const String _saJson =
       String.fromEnvironment('TTS_SERVICE_ACCOUNT_JSON');
@@ -121,7 +120,7 @@ class GoogleCloudTtsService {
   String get _apiKey {
     if (_googleTtsKey.trim().isNotEmpty) return _googleTtsKey.trim();
     if (_ttsKey.trim().isNotEmpty) return _ttsKey.trim();
-    return _aiKey.trim();
+    return '';
   }
 
   bool get isConfigured =>

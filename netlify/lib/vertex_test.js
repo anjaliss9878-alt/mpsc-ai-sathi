@@ -62,3 +62,13 @@ test('parseEmbeddingValues reads embedContent and predict shapes', () => {
   );
   assert.equal(parseEmbeddingValues({}), null);
 });
+
+test('learnGroundedPreferVertex is insufficient without chunks', async () => {
+  const { learnGroundedPreferVertex } = require('./vertex');
+  const out = await learnGroundedPreferVertex({
+    mode: 'answer',
+    question: 'Article 14?',
+    chunks: [],
+  });
+  assert.equal(out.insufficient, true);
+});

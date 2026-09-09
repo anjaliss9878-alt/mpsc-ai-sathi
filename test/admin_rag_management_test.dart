@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
@@ -46,6 +47,36 @@ class _FakeBackend extends RagBackendClient {
     String task = 'document',
   }) async {
     return [for (final t in texts) _fakeEmbed(t)];
+  }
+}
+
+class _GatedBackend extends _FakeBackend {
+  Completer<void>? gate;
+  bool failWithTimeout = false;
+  int extractCalls = 0;
+
+  @override
+  Future<List<RagExtractedPage>> extractPdf({
+    required String fileUrl,
+    String title = '',
+  }) async {
+    extractCalls++;
+    final g = gate;
+    if (g != null) await g.future;
+    if (failWithTimeout) {
+      throw TimeoutException(
+        'Future not completed',
+        const Duration(minutes: 3),
+      );
+    }
+    return [
+      RagExtractedPage(
+        pageNumber: 1,
+        text:
+            'भारतीय संविधानातील संसद ही द्विसदनी आहे. लोकसभा आणि राज्यसभा. ' *
+            12,
+      ),
+    ];
   }
 }
 
@@ -116,6 +147,27 @@ void main() {
     expect(
       ragManagementStatusToString(RagManagementStatus.needsReindex),
       'Needs Re-index',
+    );
+    expect(
+      ragIndexingNeedsRetry(
+        _source(id: 'p', status: RagSourceStatus.processing),
+        inFlight: false,
+      ),
+      isTrue,
+    );
+    expect(
+      ragIndexingNeedsRetry(
+        _source(id: 'p', status: RagSourceStatus.processing),
+        inFlight: true,
+      ),
+      isFalse,
+    );
+    expect(
+      ragIndexingHint(
+        _source(id: 'p', status: RagSourceStatus.processing),
+        inFlight: false,
+      ),
+      contains('Retry'),
     );
   });
 
@@ -233,6 +285,7 @@ void main() {
       ],
     );
     expect(stripped.domains, [RagDomain.notes]);
+    expect(stripped.onlyPublishedReady, isFalse);
     expect(stripped.performance, isEmpty);
     expect(
       adminRagTestAllowsStudentPerformance(
@@ -346,5 +399,129 @@ void main() {
     );
     expect(ready.needsReindex, isFalse);
     expect(ragManagementStatus(ready), RagManagementStatus.ready);
+  });
+
+  test('Save & Process returns immediately with Processing status', () async {
+    final firestore = FakeFirebaseFirestore();
+    final sources = RagSourceRepository(firestore: firestore);
+    final chunks = RagChunkRepository(firestore: firestore);
+    final backend = _GatedBackend();
+    backend.gate = Completer<void>();
+    final processing = RagProcessingService(
+      sources: sources,
+      chunks: chunks,
+      backend: backend,
+      firestore: firestore,
+      notes: NotesRepository(firestore: firestore),
+      pyqs: PyqRepository(firestore: firestore),
+      currentAffairs: CurrentAffairsRepository(firestore: firestore),
+    );
+
+    final sw = Stopwatch()..start();
+    final saved = await processing.saveAndEnqueueProcessing(
+      _source(
+        id: '',
+        status: RagSourceStatus.processing,
+        sourceType: RagSourceType.pdf,
+        fileUrl: 'https://example.invalid/polity.pdf',
+        linkedId: '',
+        contentType: kNotesPdfContentType,
+        chunkCount: 0,
+      ),
+    );
+    sw.stop();
+
+    expect(sw.elapsedMilliseconds, lessThan(500));
+    expect(saved.status, RagSourceStatus.processing);
+    expect(saved.subjectId, 'pol');
+    expect(saved.chapterId, 'fr');
+    expect(saved.topicId, 'a14');
+    expect(saved.fileUrl, 'https://example.invalid/polity.pdf');
+    expect(processing.isProcessInFlight(saved.id), isTrue);
+    expect(processing.enqueueProcessSource(saved.id), isFalse);
+
+    backend.gate!.complete();
+    for (var i = 0; i < 80 && processing.isProcessInFlight(saved.id); i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+    }
+    expect(backend.extractCalls, 1);
+    final ready = await sources.get(saved.id);
+    expect(ready!.status, RagSourceStatus.ready);
+    expect(ready.chunkCount, greaterThan(0));
+    expect(await chunks.getForSource(saved.id), isNotEmpty);
+  });
+
+  test('background extract failure is stored as error, not a client timeout',
+      () async {
+    final firestore = FakeFirebaseFirestore();
+    final sources = RagSourceRepository(firestore: firestore);
+    final chunks = RagChunkRepository(firestore: firestore);
+    final backend = _GatedBackend()..failWithTimeout = true;
+    final processing = RagProcessingService(
+      sources: sources,
+      chunks: chunks,
+      backend: backend,
+      firestore: firestore,
+      notes: NotesRepository(firestore: firestore),
+      pyqs: PyqRepository(firestore: firestore),
+      currentAffairs: CurrentAffairsRepository(firestore: firestore),
+    );
+
+    final saved = await processing.saveAndEnqueueProcessing(
+      _source(
+        id: '',
+        status: RagSourceStatus.processing,
+        sourceType: RagSourceType.pdf,
+        fileUrl: 'https://example.invalid/polity.pdf',
+        linkedId: '',
+        contentType: kNotesPdfContentType,
+        chunkCount: 0,
+      ),
+    );
+    expect(saved.status, RagSourceStatus.processing);
+
+    for (var i = 0; i < 80 && processing.isProcessInFlight(saved.id); i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+    }
+    final failed = await sources.get(saved.id);
+    expect(failed!.status, RagSourceStatus.failed);
+    expect(failed.errorMessage, isNotEmpty);
+    expect(failed.errorMessage.toLowerCase(), contains('timeout'));
+  });
+
+  test('hung extract marks Failed instead of staying Processing', () async {
+    final firestore = FakeFirebaseFirestore();
+    final sources = RagSourceRepository(firestore: firestore);
+    final chunks = RagChunkRepository(firestore: firestore);
+    final backend = _GatedBackend()..gate = Completer<void>();
+    final processing = RagProcessingService(
+      sources: sources,
+      chunks: chunks,
+      backend: backend,
+      firestore: firestore,
+      notes: NotesRepository(firestore: firestore),
+      pyqs: PyqRepository(firestore: firestore),
+      currentAffairs: CurrentAffairsRepository(firestore: firestore),
+      extractTimeout: const Duration(milliseconds: 40),
+    );
+
+    final saved = await processing.saveAndEnqueueProcessing(
+      _source(
+        id: '',
+        status: RagSourceStatus.processing,
+        sourceType: RagSourceType.pdf,
+        fileUrl: 'https://example.invalid/polity.pdf',
+        linkedId: '',
+        contentType: kNotesPdfContentType,
+        chunkCount: 0,
+      ),
+    );
+    for (var i = 0; i < 80 && processing.isProcessInFlight(saved.id); i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+    }
+    final failed = await sources.get(saved.id);
+    expect(processing.isProcessInFlight(saved.id), isFalse);
+    expect(failed!.status, RagSourceStatus.failed);
+    expect(failed.errorMessage.toLowerCase(), contains('timed out'));
   });
 }

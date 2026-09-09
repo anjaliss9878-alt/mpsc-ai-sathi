@@ -1,12 +1,13 @@
+import 'package:mpsc_combine_ai/data/student_curriculum.dart';
 import 'package:mpsc_combine_ai/services/syllabus_progress_tracker.dart';
 
 /// Single place for Weakness Tracker cut-offs. UI and planner read these
 /// through [WeaknessSnapshot.thresholds] instead of scattering literals.
 class WeaknessThresholds {
   const WeaknessThresholds({
-    this.strongMin = 80,
-    this.improvingMin = 60,
-    this.weakMin = 40,
+    this.strongMin = 70,
+    this.improvingMin = 50,
+    this.weakMin = 0,
     this.trendDelta = 5,
     this.minSamplesForTrend = 2,
     this.recentWindowDays = 14,
@@ -17,13 +18,14 @@ class WeaknessThresholds {
 
   static const defaults = WeaknessThresholds();
 
-  /// Accuracy >= this ⇒ Strong.
+  /// Accuracy >= this ⇒ Strong. MVP: 70%.
   final double strongMin;
 
-  /// Accuracy >= this and < [strongMin] ⇒ Improving.
+  /// Accuracy >= this and < [strongMin] ⇒ Improving. MVP: 50–69%.
   final double improvingMin;
 
   /// Accuracy >= this and < [improvingMin] ⇒ Weak. Below ⇒ Critical.
+  /// MVP uses 0 so < 50% is Weak (no Critical band).
   final double weakMin;
 
   /// Minimum absolute accuracy change (percentage points) to call a trend.
@@ -69,10 +71,10 @@ extension WeaknessBandX on WeaknessBand {
       };
 
   String get priorityLabel => switch (this) {
-        WeaknessBand.critical => 'High',
-        WeaknessBand.weak => 'Medium',
-        WeaknessBand.improving => 'Low',
-        WeaknessBand.strong => 'Low',
+        WeaknessBand.critical => 'Very High',
+        WeaknessBand.weak => 'High',
+        WeaknessBand.improving => 'Medium',
+        WeaknessBand.strong => 'Maintenance',
         WeaknessBand.insufficient => '—',
       };
 }
@@ -117,6 +119,7 @@ class PerformanceSample {
     this.subjectId = '',
     this.chapterId = '',
     this.subjectTitle = '',
+    this.areaId = '',
   });
 
   final DateTime at;
@@ -129,6 +132,7 @@ class PerformanceSample {
   final String subjectId;
   final String chapterId;
   final String subjectTitle;
+  final String areaId;
 
   double get accuracyPercent =>
       weaknessAccuracyPercent(correct: correct, attempted: attempted);
@@ -156,6 +160,11 @@ class TopicWeaknessReport {
     this.examImportant = false,
     this.staleRevision = false,
     this.sources = const [],
+    this.latestPercent = 0,
+    this.bestPercent = 0,
+    this.recentPercent = 0,
+    this.sessionCount = 0,
+    this.diagnosticPercent,
   });
 
   final String label;
@@ -178,6 +187,11 @@ class TopicWeaknessReport {
   final bool staleRevision;
   final List<String> sources;
   final List<WeaknessAction> actions;
+  final double latestPercent;
+  final double bestPercent;
+  final double recentPercent;
+  final int sessionCount;
+  final double? diagnosticPercent;
 
   bool get hasPerformance => attempted > 0;
 }
@@ -194,6 +208,8 @@ class SubjectWeaknessReport {
     required this.accuracyPercent,
     required this.topics,
     this.timeSeconds = 0,
+    this.latestPercent = 0,
+    this.diagnosticPercent,
   });
 
   final String subjectId;
@@ -206,6 +222,8 @@ class SubjectWeaknessReport {
   final double accuracyPercent;
   final int timeSeconds;
   final List<TopicWeaknessReport> topics;
+  final double latestPercent;
+  final double? diagnosticPercent;
 
   bool get hasPerformance => attempted > 0;
 }
@@ -252,7 +270,7 @@ int weaknessPriority({
     WeaknessBand.strong => 0,
     WeaknessBand.insufficient => 0,
   };
-  if (repeatedMistakes) score += 12;
+  if (repeatedMistakes) score += 20;
   if (trend == PerformanceTrend.declining) score += 15;
   if (incompleteSyllabus) score += 10;
   if (staleRevision) score += 10;
@@ -372,6 +390,23 @@ class WeaknessAnalysisResult {
 
   bool get hasPerformance => overallAttempted > 0;
 
+  List<String> get diagnosticComparisons {
+    final lines = <String>[];
+    for (final s in subjects) {
+      final initial = s.diagnosticPercent;
+      if (initial == null || !s.hasPerformance) continue;
+      final later = s.topics.any(
+        (t) => t.sources.any((x) => x != 'diagnostic'),
+      );
+      if (!later && (s.latestPercent - initial).abs() < 0.5) continue;
+      final arrow = s.latestPercent >= initial ? '↑' : '↓';
+      lines.add(
+        '${s.subjectTitle}: ${initial.round()}% → ${s.latestPercent.round()}% $arrow',
+      );
+    }
+    return lines;
+  }
+
   List<TopicWeaknessReport> get priorityWeakAreas => topics
       .where((t) => t.hasPerformance && t.band.isWeakLike)
       .toList()
@@ -416,29 +451,54 @@ WeaknessAnalysisResult analyzeWeakness(WeaknessAnalysisInput input) {
       .subtract(Duration(days: now.weekday - 1));
 
   final byChapter = <String, List<PerformanceSample>>{};
-  final bySubject = <String, List<PerformanceSample>>{};
-  final subjectTitles = <String, String>{};
+  final byGroup = <String, List<PerformanceSample>>{};
+  final groupTitles = <String, String>{};
+  final groupSubjectIds = <String, String>{};
+
+  SyllabusTopicProgress? topicFor(PerformanceSample sample) {
+    if (sample.chapterId.isEmpty) return null;
+    for (final t in input.syllabus.topics) {
+      if (t.chapterId == sample.chapterId) return t;
+    }
+    return null;
+  }
+
+  String groupKeyFor(PerformanceSample sample) {
+    if (sample.areaId.isNotEmpty) return 'area:${sample.areaId}';
+    final topic = topicFor(sample);
+    if (topic != null) {
+      final tag = chapterSyllabusAreaId(topic.chapter);
+      if (_isPlannerAreaTag(tag)) return 'area:$tag';
+    }
+    if (sample.subjectId.isNotEmpty) return sample.subjectId;
+    if (sample.subjectTitle.isNotEmpty) {
+      return 'title:${sample.subjectTitle.toLowerCase()}';
+    }
+    return '';
+  }
+
+  String groupTitleFor(String key, PerformanceSample sample) {
+    if (key.startsWith('area:')) {
+      return syllabusAreaTitle(key.substring(5));
+    }
+    if (sample.subjectTitle.isNotEmpty) return sample.subjectTitle;
+    final topic = topicFor(sample);
+    if (topic != null) return topic.plannerSubjectTitle;
+    return key;
+  }
 
   for (final sample in input.samples) {
     if (sample.attempted <= 0) continue;
     if (sample.chapterId.isNotEmpty) {
       byChapter.putIfAbsent(sample.chapterId, () => []).add(sample);
     }
-    final subjectKey = sample.subjectId.isNotEmpty
-        ? sample.subjectId
-        : (sample.subjectTitle.isNotEmpty
-            ? 'title:${sample.subjectTitle.toLowerCase()}'
-            : '');
-    if (subjectKey.isNotEmpty) {
-      bySubject.putIfAbsent(subjectKey, () => []).add(sample);
-      subjectTitles[subjectKey] = sample.subjectTitle.isNotEmpty
-          ? sample.subjectTitle
-          : sample.label;
+    final key = groupKeyFor(sample);
+    if (key.isEmpty) continue;
+    byGroup.putIfAbsent(key, () => []).add(sample);
+    groupTitles[key] = groupTitleFor(key, sample);
+    if (sample.subjectId.isNotEmpty) {
+      groupSubjectIds[key] = sample.subjectId;
     }
-  }
-
-  for (final topic in input.syllabus.topics) {
-    subjectTitles[topic.subjectId] = topic.subjectTitle;
   }
 
   TopicWeaknessReport buildTopic({
@@ -458,7 +518,11 @@ WeaknessAnalysisResult analyzeWeakness(WeaknessAnalysisInput input) {
       correct: correct,
       attempted: attempted,
     );
-    final band = attempted <= 0 ? WeaknessBand.insufficient : t.bandFor(accuracy);
+    final orderedForBand = [...samples]..sort((a, b) => a.at.compareTo(b.at));
+    final latestForBand =
+        orderedForBand.isEmpty ? accuracy : orderedForBand.last.accuracyPercent;
+    final band =
+        attempted <= 0 ? WeaknessBand.insufficient : t.bandFor(latestForBand);
 
     final recent = samples.where((s) => !s.at.isBefore(recentStart)).toList();
     final previous = samples
@@ -499,6 +563,13 @@ WeaknessAnalysisResult analyzeWeakness(WeaknessAnalysisInput input) {
       examImportant: examImportant,
     );
     final sources = samples.map((s) => s.source).toSet().toList();
+    final ordered = [...samples]..sort((a, b) => a.at.compareTo(b.at));
+    final latest = ordered.isEmpty ? 0.0 : ordered.last.accuracyPercent;
+    var best = 0.0;
+    for (final s in samples) {
+      if (s.accuracyPercent > best) best = s.accuracyPercent;
+    }
+    final diagnostic = samples.where((s) => s.source == 'diagnostic').toList();
     return TopicWeaknessReport(
       label: label,
       subjectId: subjectId,
@@ -519,6 +590,11 @@ WeaknessAnalysisResult analyzeWeakness(WeaknessAnalysisInput input) {
       examImportant: examImportant,
       staleRevision: stale,
       sources: sources,
+      latestPercent: latest,
+      bestPercent: best,
+      recentPercent: _sampleAccuracy(recent) ?? latest,
+      sessionCount: samples.length,
+      diagnosticPercent: diagnostic.isEmpty ? null : _sampleAccuracy(diagnostic),
       actions: weaknessActionsFor(
         band: band,
         syllabusStatus: syllabusTopic?.status,
@@ -539,7 +615,7 @@ WeaknessAnalysisResult analyzeWeakness(WeaknessAnalysisInput input) {
         key: topic.chapterId,
         label: topic.chapterTitle,
         subjectId: topic.subjectId,
-        subjectTitle: topic.subjectTitle,
+        subjectTitle: topic.plannerSubjectTitle,
         chapterId: topic.chapterId,
         samples: samples,
         syllabusTopic: topic,
@@ -566,18 +642,14 @@ WeaknessAnalysisResult analyzeWeakness(WeaknessAnalysisInput input) {
   topics.sort((a, b) => b.priority.compareTo(a.priority));
 
   final subjects = <SubjectWeaknessReport>[];
-  final subjectKeys = {
-    ...bySubject.keys,
-    ...input.syllabus.subjects.map((s) => s.subject.id),
-  };
-  for (final key in subjectKeys) {
-    final samples = bySubject[key] ?? const <PerformanceSample>[];
+  for (final key in byGroup.keys) {
+    final samples = byGroup[key] ?? const <PerformanceSample>[];
     final topicRows = topics.where((t) {
-      if (t.subjectId.isNotEmpty && t.subjectId == key) return true;
-      return false;
+      if (t.chapterId.isEmpty) return false;
+      return samples.any((s) => s.chapterId == t.chapterId);
     }).toList();
     final attempted = samples.fold<int>(0, (s, x) => s + x.attempted);
-    if (attempted <= 0 && topicRows.every((t) => !t.hasPerformance)) continue;
+    if (attempted <= 0) continue;
     final correct = samples.fold<int>(0, (s, x) => s + x.correct);
     final wrong = samples.fold<int>(0, (s, x) => s + x.wrong);
     final time = samples.fold<int>(0, (s, x) => s + x.timeSeconds);
@@ -591,12 +663,18 @@ WeaknessAnalysisResult analyzeWeakness(WeaknessAnalysisInput input) {
     final previous = samples
         .where((s) => s.at.isBefore(recentStart) && !s.at.isBefore(previousStart))
         .toList();
-    final title = subjectTitles[key]?.isNotEmpty == true
-        ? subjectTitles[key]!
+    final ordered = [...samples]..sort((a, b) => a.at.compareTo(b.at));
+    final latest = ordered.isEmpty ? accuracy : ordered.last.accuracyPercent;
+    final diagnostic = samples.where((s) => s.source == 'diagnostic').toList();
+    final title = groupTitles[key]?.isNotEmpty == true
+        ? groupTitles[key]!
         : (topicRows.isNotEmpty ? topicRows.first.subjectTitle : key);
+    final storedId = groupSubjectIds[key] ?? '';
     subjects.add(
       SubjectWeaknessReport(
-        subjectId: key.startsWith('title:') ? '' : key,
+        subjectId: key.startsWith('area:')
+            ? key.substring(5)
+            : (key.startsWith('title:') ? '' : (storedId.isNotEmpty ? storedId : key)),
         subjectTitle: title,
         band: band,
         trend: weaknessTrend(
@@ -612,6 +690,9 @@ WeaknessAnalysisResult analyzeWeakness(WeaknessAnalysisInput input) {
         accuracyPercent: accuracy,
         timeSeconds: time,
         topics: topicRows,
+        latestPercent: latest,
+        diagnosticPercent:
+            diagnostic.isEmpty ? null : _sampleAccuracy(diagnostic),
       ),
     );
   }
@@ -686,20 +767,43 @@ bool _examImportant({
 SyllabusTopicProgress? matchSyllabusTopic({
   required String title,
   required List<SyllabusTopicProgress> topics,
+  bool requireUniqueChapterTitle = false,
 }) {
   final hay = title.toLowerCase().trim();
   if (hay.isEmpty || topics.isEmpty) return null;
+  final chapterHits = <SyllabusTopicProgress>[];
   for (final t in topics) {
-    if (t.chapterTitle.isNotEmpty &&
-        hay.contains(t.chapterTitle.toLowerCase())) {
-      return t;
-    }
+    final chapter = t.chapterTitle.trim().toLowerCase();
+    if (chapter.length < 6) continue;
+    if (hay.contains(chapter)) chapterHits.add(t);
   }
+  if (chapterHits.length == 1) return chapterHits.first;
+  if (chapterHits.length > 1 || requireUniqueChapterTitle) return null;
+  final subjectHits = <SyllabusTopicProgress>[];
   for (final t in topics) {
-    if (t.subjectTitle.isNotEmpty &&
-        hay.contains(t.subjectTitle.toLowerCase())) {
-      return t;
-    }
+    final subject = t.subjectTitle.trim().toLowerCase();
+    if (subject.length < 4) continue;
+    if (subject == 'general ability test') continue;
+    if (hay.contains(subject)) subjectHits.add(t);
   }
+  final uniqueSubjects = {for (final t in subjectHits) t.subjectId};
+  if (uniqueSubjects.length == 1) return subjectHits.first;
   return null;
+}
+
+bool _isPlannerAreaTag(String tag) {
+  const areas = {
+    'current_affairs',
+    'history',
+    'geography',
+    'economy',
+    'polity',
+    'general_science',
+    'intelligence_arithmetic',
+    'environment',
+    'marathi',
+    'english',
+    'general_studies',
+  };
+  return areas.contains(tag);
 }

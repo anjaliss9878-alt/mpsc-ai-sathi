@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:mpsc_combine_ai/data/student_curriculum.dart';
 import 'package:mpsc_combine_ai/models/chapter_item.dart';
 import 'package:mpsc_combine_ai/models/subject_item.dart';
 import 'package:mpsc_combine_ai/models/syllabus_topic_record.dart';
@@ -42,6 +43,8 @@ class SyllabusTopicProgress {
 
   String get subjectId => subject.id;
   String get subjectTitle => subject.title;
+  String get plannerSubjectTitle => plannerSubjectTitleForChapter(chapter);
+  String get plannerAreaId => plannerAreaIdForChapter(chapter);
   String get chapterId => chapter.id;
   String get chapterTitle => chapter.title;
 

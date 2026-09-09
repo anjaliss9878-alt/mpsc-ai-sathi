@@ -9,7 +9,7 @@
     it to work correctly.
 
     For more details:
-    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
+    * https://developer.mozilla.org/en/docs/Web/HTML/Element/base
 
     This is a placeholder for base href that will be replaced by the value of
     the `--base-href` argument provided to `flutter build`.
@@ -18,18 +18,22 @@
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
+  <meta name="description" content="MPSC AI SATHI — यशाचा मार्ग, AI च्या सोबतीने">
+  <meta name="theme-color" content="#0B2A4A">
 
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="mpsc_combine_ai">
-  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+  <meta name="apple-mobile-web-app-title" content="MPSC AI SATHI">
+  <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
+  <link rel="apple-touch-icon" sizes="192x192" href="icons/Icon-192.png">
 
-  <!-- Favicon -->
-  <link rel="icon" type="image/png" href="favicon.png"/>
+  <!-- Favicon: 64px plus 192/512 for Google / Netlify / PWA -->
+  <link rel="icon" type="image/png" sizes="64x64" href="favicon.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/Icon-192.png">
+  <link rel="icon" type="image/png" sizes="512x512" href="icons/Icon-512.png">
 
-  <title>mpsc_combine_ai</title>
+  <title>MPSC AI SATHI</title>
   <link rel="manifest" href="manifest.json">
 </head>
 <body>
@@ -42,5 +46,66 @@
     * https://docs.flutter.dev/platform-integration/web/initialization
   -->
   <script src="flutter_bootstrap.js" async></script>
+  <script>
+    // Flutter *debug* web (DDC + DWDS) hoists main into window.$dartRunMain
+    // and only invokes it after a DWDS RunRequest (debugger / Dart Debug
+    // Extension). Reloading localhost in a normal Chrome tab never sends
+    // that request, so the page stays blank with no JavaScript exception.
+    //
+    // A one-shot 2s call is not enough: $dartRunMain may exist before
+    // $dartMainTearOffs is populated. Calling it then sets
+    // $dartMainExecuted=true with an empty tear-off list, and a naive
+    // "already executed" check never retries. Keep kicking until a
+    // Flutter view actually attaches.
+    (function () {
+      function hasFlutterUi() {
+        return !!(
+          document.querySelector('flutter-view') ||
+          document.querySelector('flt-glass-pane') ||
+          document.querySelector('flt-scene-host')
+        );
+      }
+
+      function tearOffCount() {
+        var list = window.$dartMainTearOffs;
+        return Array.isArray(list) ? list.length : 0;
+      }
+
+      function tryRunMain() {
+        if (typeof window.$dartReadyToRunMain === 'function') {
+          try { window.$dartReadyToRunMain(); } catch (e) {}
+        }
+        if (typeof window.$dartRunMain !== 'function') return false;
+        try {
+          window.$dartRunMain();
+          return true;
+        } catch (e) {
+          return false;
+        }
+      }
+
+      var startedAt = Date.now();
+      var invokedWithTearOffs = false;
+      var timer = setInterval(function () {
+        if (hasFlutterUi()) {
+          clearInterval(timer);
+          return;
+        }
+        var elapsed = Date.now() - startedAt;
+        var n = tearOffCount();
+        // Wait for DWDS to hoist main into $dartMainTearOffs. Calling
+        // $dartRunMain before that sets $dartMainExecuted with an empty
+        // list and the app never starts. If DWDS already ran main, skip.
+        if (n > 0 && !invokedWithTearOffs && !window.$dartMainExecuted) {
+          invokedWithTearOffs = true;
+          tryRunMain();
+          return;
+        }
+        if (elapsed >= 120000) {
+          clearInterval(timer);
+        }
+      }, 100);
+    })();
+  </script>
 </body>
 </html>

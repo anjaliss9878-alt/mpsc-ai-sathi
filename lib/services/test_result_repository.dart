@@ -53,4 +53,38 @@ class TestResultRepository {
       // Session result still available in-memory even if sync fails.
     }
   }
+
+  /// Persists a practice / PYQ attempt for the signed-in student.
+  Future<void> savePracticeAttempt({
+    required String title,
+    required List<QuestionResult> questionResults,
+    String kind = 'mcq',
+    String subjectId = '',
+    String chapterId = '',
+  }) async {
+    if (questionResults.isEmpty) return;
+    final attempted = questionResults.where((q) => q.isAttempted).length;
+    if (attempted <= 0) return;
+    final correct = questionResults.where((q) => q.isCorrect).length;
+    final wrong = attempted - correct;
+    await saveResult(
+      TestResult(
+        testTitle: title,
+        dateTime: DateTime.now(),
+        totalQuestions: questionResults.length,
+        attempted: attempted,
+        correct: correct,
+        wrong: wrong,
+        score: correct.toDouble(),
+        maxScore: questionResults.length.toDouble(),
+        percentage:
+            questionResults.isEmpty ? 0 : (correct / questionResults.length) * 100,
+        timeTakenSeconds: 0,
+        questionResults: questionResults,
+      ),
+      kind: kind,
+      subjectId: subjectId,
+      chapterId: chapterId,
+    );
+  }
 }

@@ -1,3 +1,5 @@
+import 'package:mpsc_combine_ai/services/ai_teacher_system/generated_lesson.dart';
+
 /// MPSC subject-wise AI Teacher. Detected from the student's topic, then
 /// used to pick a distinct classroom voice, visuals, and lesson arc.
 enum MpscTeachingSubject {
@@ -120,96 +122,6 @@ extension MpscTeachingSubjectX on MpscTeachingSubject {
         return 'आज आपण परिसंस्था, प्रक्रिया आकृत्या आणि संवर्धन संकल्पनांसह शिकणार आहोत.';
     }
   }
-
-  /// ElevenLabs premade voice — distinct timbre per subject teacher.
-  String get elevenLabsVoiceId {
-    switch (this) {
-      case MpscTeachingSubject.polity:
-        return const String.fromEnvironment(
-          'ELEVENLABS_VOICE_POLITY',
-          defaultValue: 'pNInz6obpgDQGcFmaJgB', // Adam — formal, measured
-        );
-      case MpscTeachingSubject.history:
-        return const String.fromEnvironment(
-          'ELEVENLABS_VOICE_HISTORY',
-          defaultValue: '2EiwWnXFnvU5JabPnv8n', // Clyde — storytelling
-        );
-      case MpscTeachingSubject.geography:
-        return const String.fromEnvironment(
-          'ELEVENLABS_VOICE_GEOGRAPHY',
-          defaultValue: 'ThT5KcBeYPX3keUQqHPh', // Dorothy — clear explainer
-        );
-      case MpscTeachingSubject.economics:
-        return const String.fromEnvironment(
-          'ELEVENLABS_VOICE_ECONOMICS',
-          defaultValue: 'ErXwobaYiN019PkySvjV', // Antoni — practical
-        );
-      case MpscTeachingSubject.science:
-        return const String.fromEnvironment(
-          'ELEVENLABS_VOICE_SCIENCE',
-          defaultValue: '21m00Tcm4TlvDq8ikWAM', // Rachel — clear explainer
-        );
-      case MpscTeachingSubject.environment:
-        return const String.fromEnvironment(
-          'ELEVENLABS_VOICE_ENVIRONMENT',
-          defaultValue: 'ThT5KcBeYPX3keUQqHPh', // Dorothy — clear explainer
-        );
-    }
-  }
-
-  /// ElevenLabs voice_settings for this subject's narration tone.
-  Map<String, Object> get elevenLabsVoiceSettings {
-    switch (this) {
-      case MpscTeachingSubject.polity:
-        return const {
-          'stability': 0.72,
-          'similarity_boost': 0.82,
-          'style': 0.08,
-          'use_speaker_boost': true,
-          'speed': 0.90,
-        };
-      case MpscTeachingSubject.history:
-        return const {
-          'stability': 0.42,
-          'similarity_boost': 0.78,
-          'style': 0.48,
-          'use_speaker_boost': true,
-          'speed': 0.94,
-        };
-      case MpscTeachingSubject.geography:
-        return const {
-          'stability': 0.55,
-          'similarity_boost': 0.80,
-          'style': 0.22,
-          'use_speaker_boost': true,
-          'speed': 0.96,
-        };
-      case MpscTeachingSubject.economics:
-        return const {
-          'stability': 0.50,
-          'similarity_boost': 0.75,
-          'style': 0.28,
-          'use_speaker_boost': true,
-          'speed': 1.02,
-        };
-      case MpscTeachingSubject.science:
-        return const {
-          'stability': 0.58,
-          'similarity_boost': 0.80,
-          'style': 0.18,
-          'use_speaker_boost': true,
-          'speed': 0.97,
-        };
-      case MpscTeachingSubject.environment:
-        return const {
-          'stability': 0.56,
-          'similarity_boost': 0.80,
-          'style': 0.20,
-          'use_speaker_boost': true,
-          'speed': 0.96,
-        };
-    }
-  }
 }
 
 /// Detects Polity / History / Geography / Economics from a free-text topic.
@@ -254,7 +166,15 @@ MpscTeachingSubject detectMpscTeachingSubject(
   if (compact.contains('science') ||
       compact.contains('विज्ञान') ||
       compact.contains('भौतिक') ||
-      compact.contains('रसायन')) {
+      compact.contains('रसायन') ||
+      compact.contains('intelligence') ||
+      compact.contains('arithmetic') ||
+      compact.contains('aptitude') ||
+      compact.contains('reasoning') ||
+      compact.contains('अंकगणित') ||
+      compact.contains('बुद्धिमत्ता') ||
+      compact.contains('तर्कशक्ती') ||
+      compact.contains('तर्क क्षमता')) {
     scores[MpscTeachingSubject.science] =
         (scores[MpscTeachingSubject.science] ?? 0) + 8;
   }
@@ -267,7 +187,7 @@ MpscTeachingSubject detectMpscTeachingSubject(
         (scores[MpscTeachingSubject.environment] ?? 0) + 8;
   }
 
-  var best = MpscTeachingSubject.geography;
+  var best = MpscTeachingSubject.science;
   var bestScore = -1;
   for (final e in scores.entries) {
     if (e.value > bestScore) {
@@ -275,6 +195,8 @@ MpscTeachingSubject detectMpscTeachingSubject(
       bestScore = e.value;
     }
   }
+  // Unclassified MPSC topics (aptitude, odd facts) must not default to Polity.
+  if (bestScore <= 0) return MpscTeachingSubject.science;
   return best;
 }
 
@@ -584,6 +506,18 @@ const _scienceKeys = <String>[
   'force',
   'आवर्त सारणी',
   'periodic',
+  'intelligence',
+  'arithmetic',
+  'aptitude',
+  'reasoning',
+  'syllogism',
+  'coding',
+  'decoding',
+  'अंकगणित',
+  'बुद्धिमत्ता',
+  'तर्कशक्ती',
+  'तर्क क्षमता',
+  'संख्या मालिका',
 ];
 
 const _environmentKeys = <String>[
@@ -615,6 +549,31 @@ const _environmentKeys = <String>[
   'climate change',
   'हवामान बदल',
 ];
+
+/// Subject-teacher visual template. Never invents facts — SceneEngine still
+/// draws from the slide's existing bullets / timeline / map / flowchart.
+SlideVisualType subjectSlideVisualType({
+  required MpscTeachingSubject subject,
+  required GeneratedSlide slide,
+}) {
+  final resolved = slide.resolvedVisualType;
+  if (resolved != SlideVisualType.bullets) return resolved;
+  switch (subject) {
+    case MpscTeachingSubject.history:
+      return SlideVisualType.timeline;
+    case MpscTeachingSubject.geography:
+      return SlideVisualType.map;
+    case MpscTeachingSubject.polity:
+      return slide.sceneType == LessonSceneType.examples
+          ? SlideVisualType.table
+          : SlideVisualType.flowchart;
+    case MpscTeachingSubject.economics:
+      return SlideVisualType.flowchart;
+    case MpscTeachingSubject.science:
+    case MpscTeachingSubject.environment:
+      return SlideVisualType.flowchart;
+  }
+}
 
 /// Shared JSON lesson contract + subject-specific classroom persona.
 String lessonSystemPrompt(MpscTeachingSubject? subject) {
@@ -836,13 +795,13 @@ Return ONLY one JSON object (no markdown) with these keys:
   "revision": ["...","...","...","...","..."],
   "notes": ["...","...","...","...","...","..."],
   "mcqs": [{"question":"...","options":["अ","ब","क","ड"],"correctIndex":0,"explanation":"..."}],
-  "pyqs": [{"question":"...","answer":"...","analysis":"...","exam":"PYQ-based practice question"}],
+  "pyqs": [],
   "slides": [{"title":"...","bullets":["...","..."],"narration":"...","keywords":["..."],"sceneType":"introduction","visualType":"bullets"}]
 }
 Keep JSON complete (do not truncate):
 - exactly 5 slides (2-sentence narration each)
 - exactly 6 MCQs
-- exactly 4 PYQ-style questions
+- pyqs must be [] — never invent previous-year questions
 - 3 concepts, 4 important_facts, 3 mpsc_points, 2 examples, 2 exam_traps
 - 2 memoryTricks, 5 revision points, 5 short notes
 All student-facing text in simple Marathi. JSON only. Do not add extra keys.

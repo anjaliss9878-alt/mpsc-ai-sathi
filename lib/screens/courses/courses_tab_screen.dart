@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:mpsc_combine_ai/models/continue_session.dart';
+import 'package:mpsc_combine_ai/models/exam_item.dart';
 import 'package:mpsc_combine_ai/models/student_profile.dart';
 import 'package:mpsc_combine_ai/models/subject_item.dart';
 import 'package:mpsc_combine_ai/screens/ai_teacher_classroom/ai_teacher_classroom_screen.dart'
@@ -89,6 +92,7 @@ class CoursesTabScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    unawaited(notesRepository.ensureDefaultExam());
     final uid = authService.currentUser?.uid;
     return Scaffold(
       appBar: AppBar(
@@ -111,7 +115,9 @@ class CoursesTabScreen extends StatelessWidget {
               builder: (context, profileSnap) {
                 final profile = profileSnap.data;
                 return StreamBuilder<List<SubjectItem>>(
-                  stream: notesRepository.watchPublishedSubjects(),
+                  stream: notesRepository.watchPublishedSubjects(
+                    examId: kGroupBCombinedExamId,
+                  ),
                   builder: (context, subjectsSnap) {
                     if (subjectsSnap.hasError) {
                       return ErrorState(

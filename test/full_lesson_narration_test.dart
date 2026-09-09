@@ -4,10 +4,11 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:mpsc_combine_ai/services/ai_backend_base.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/full_lesson_narration.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/subject_teacher.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/teaching_sequence.dart';
-import 'package:mpsc_combine_ai/services/elevenlabs_tts_service.dart';
+import 'package:mpsc_combine_ai/services/ai_tts_service.dart';
 
 void main() {
   final service = FullLessonNarrationService();
@@ -105,54 +106,66 @@ void main() {
     expect(spans[0].end <= spans[1].start || spans[0].end == spans[1].start, isTrue);
   });
 
-  test('synthesize posts one ElevenLabs request with the subject voice', () async {
+  test('synthesize posts one /ai/tts request for Gemini voice', () async {
     String? postedPath;
     String? postedBody;
+    String? auth;
     final client = MockClient((request) async {
       postedPath = request.url.path;
       postedBody = request.body;
+      auth = request.headers['authorization'];
       final audio = base64Encode(Uint8List(900));
       return http.Response(
         jsonEncode({
           'audio_base64': audio,
-          'alignment': {
-            'characters': ['न', 'म'],
-            'character_start_times_seconds': [0.0, 0.2],
-            'character_end_times_seconds': [0.2, 0.8],
-          },
+          'mimeType': 'audio/wav',
+          'durationMs': 800,
+          'voiceId': 'Kore',
+          'modelId': kGeminiTtsModel,
         }),
         200,
         headers: {'content-type': 'application/json'},
       );
     });
 
-    final eleven = ElevenLabsTtsService(client: client, apiKey: 'test-key');
-    final tts = FullLessonNarrationService(elevenLabs: eleven);
-    final bundle = await tts.synthesize(
+    final tts = AiTtsService(
+      client: client,
+      backendBases: const [kProductionAiBackendOrigin],
+      idToken: () async => 'id-token',
+    );
+    final service = FullLessonNarrationService(tts: tts);
+    final bundle = await service.synthesize(
       scriptLines: const ['नमस्कार. आज राज्यघटना शिकूया.'],
       subject: MpscTeachingSubject.polity,
       topic: 'राज्यघटना',
     );
 
-    expect(postedPath, contains(MpscTeachingSubject.polity.elevenLabsVoiceId));
-    expect(postedPath, contains('/with-timestamps'));
-    expect(postedBody, isNotNull);
+    expect(postedPath, '/ai/tts');
+    expect(auth, 'Bearer id-token');
     expect(postedBody, contains('नमस्कार'));
+    expect(postedBody, isNot(contains('elevenlabs')));
     expect(bundle.bytes.length, greaterThanOrEqualTo(800));
-    expect(bundle.mimeType, 'audio/mpeg');
+    expect(bundle.mimeType, 'audio/wav');
     expect(bundle.spans, isNotEmpty);
   });
 
-  test('missing ElevenLabs key fails before any network call', () async {
-    final tts = FullLessonNarrationService(
-      elevenLabs: ElevenLabsTtsService(apiKey: ''),
+  test('empty script fails before any network call', () async {
+    var calls = 0;
+    final tts = AiTtsService(
+      client: MockClient((request) async {
+        calls += 1;
+        return http.Response('{}', 500);
+      }),
+      backendBases: const [kProductionAiBackendOrigin],
+      idToken: () async => 'token',
     );
     expect(
-      () => tts.synthesize(
-        scriptLines: const ['नमस्कार'],
+      () => FullLessonNarrationService(tts: tts).synthesize(
+        scriptLines: const ['   '],
         subject: MpscTeachingSubject.history,
       ),
-      throwsA(isA<ElevenLabsTtsException>()),
+      throwsA(isA<AiTtsException>()),
     );
+    expect(calls, 0);
   });
 }

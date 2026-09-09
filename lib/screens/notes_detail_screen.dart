@@ -3,13 +3,18 @@ import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:mpsc_combine_ai/models/chapter_item.dart';
 import 'package:mpsc_combine_ai/models/mcq_item.dart';
 import 'package:mpsc_combine_ai/models/note_item.dart';
+import 'package:mpsc_combine_ai/models/pyq_item.dart';
 import 'package:mpsc_combine_ai/models/teaching_slide_deck_item.dart';
 import 'package:mpsc_combine_ai/screens/ai_teacher_classroom/ai_teacher_classroom_screen.dart';
 import 'package:mpsc_combine_ai/screens/ai_teacher_classroom/widgets/ai_lesson_studio.dart';
+import 'package:mpsc_combine_ai/screens/mcq_set_screen.dart';
+import 'package:mpsc_combine_ai/screens/study_content/study_content_screen.dart';
+import 'package:mpsc_combine_ai/screens/pyq_screen.dart';
 import 'package:mpsc_combine_ai/services/auth_service.dart';
 import 'package:mpsc_combine_ai/services/link_launcher.dart';
 import 'package:mpsc_combine_ai/services/mcq_repository.dart';
 import 'package:mpsc_combine_ai/services/notes_repository.dart';
+import 'package:mpsc_combine_ai/services/pyq_repository.dart';
 import 'package:mpsc_combine_ai/services/student_progress_repository.dart';
 import 'package:mpsc_combine_ai/services/teaching_slide_repository.dart';
 import 'package:mpsc_combine_ai/theme/app_colors.dart';
@@ -839,6 +844,24 @@ class _RelatedMcqsSection extends StatelessWidget {
                     '+ ${mcqs.length - preview.length} अधिक MCQ Practice मध्ये',
                     style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
                   ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: FilledButton.icon(
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => McqSetScreen(
+                            setTitle: '$subjectTitle MCQ',
+                            questions: mcqs,
+                          ),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.quiz_rounded),
+                    label: const Text('Attempt MCQs'),
+                  ),
+                ),
               ],
             ),
           ),
@@ -946,57 +969,86 @@ class _ChapterAiActions extends StatelessWidget {
   Widget build(BuildContext context) {
     final actions = <({IconData icon, String label, VoidCallback onTap})>[
       (
-        icon: Icons.play_circle_fill_rounded,
-        label: 'AI Lesson',
+        icon: Icons.videocam_rounded,
+        label: 'AI Video',
         onTap: () => _open(context, AiLessonStudioTab.video),
+      ),
+      (
+        icon: Icons.school_rounded,
+        label: 'AI Teacher',
+        onTap: () => _open(context, AiLessonStudioTab.askAi),
       ),
       (
         icon: Icons.menu_book_rounded,
         label: 'Notes',
-        onTap: () {},
-      ),
-      (
-        icon: Icons.picture_as_pdf_outlined,
-        label: 'PDF',
-        onTap: () => _open(context, AiLessonStudioTab.notes),
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => StudyContentScreen(
+              initialTopic: chapter.title,
+              subjectTitle: subjectTitle,
+              subjectId: chapter.subjectId,
+              chapterId: chapter.parentChapterId.isNotEmpty
+                  ? chapter.parentChapterId
+                  : chapter.id,
+              topicId: chapter.id,
+            ),
+          ),
+        ),
       ),
       (
         icon: Icons.style_rounded,
-        label: 'Revision',
+        label: 'Quick Revision',
         onTap: () => _open(context, AiLessonStudioTab.revision),
       ),
       (
         icon: Icons.quiz_rounded,
-        label: 'MCQ',
+        label: 'MCQ Practice',
         onTap: () => _open(context, AiLessonStudioTab.mcqs),
       ),
     ];
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'AI शिक्षक',
-          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w800,
-                color: AppColors.textPrimary,
+    return StreamBuilder<List<PyqItem>>(
+      stream: pyqRepository.watchForChapter(chapter.id),
+      builder: (context, pyqSnap) {
+        final pyqs = pyqSnap.data ?? const [];
+        final chips = [
+          ...actions,
+          if (pyqs.isNotEmpty)
+            (
+              icon: Icons.history_edu_rounded,
+              label: 'PYQs',
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(builder: (_) => const PyqScreen()),
               ),
-        ),
-        const SizedBox(height: 10),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
+            ),
+        ];
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            for (final a in actions)
-              ActionChip(
-                avatar: Icon(a.icon, size: 18, color: AppColors.navy),
-                label: Text(a.label),
-                backgroundColor: Colors.white,
-                side: BorderSide(color: AppColors.navy.withValues(alpha: 0.12)),
-                onPressed: a.onTap,
-              ),
+            Text(
+              'AI शिक्षक',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.textPrimary,
+                  ),
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final a in chips)
+                  ActionChip(
+                    avatar: Icon(a.icon, size: 18, color: AppColors.navy),
+                    label: Text(a.label),
+                    backgroundColor: Colors.white,
+                    side: BorderSide(color: AppColors.navy.withValues(alpha: 0.12)),
+                    onPressed: a.onTap,
+                  ),
+              ],
+            ),
           ],
-        ),
-      ],
+        );
+      },
     );
   }
 }

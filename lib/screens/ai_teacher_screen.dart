@@ -18,6 +18,7 @@ import 'package:mpsc_combine_ai/services/rag_retrieval_service.dart';
 import 'package:mpsc_combine_ai/services/rag_source_repository.dart';
 import 'package:mpsc_combine_ai/theme/app_colors.dart';
 import 'package:mpsc_combine_ai/utils/chat_categorizer.dart';
+import 'package:mpsc_combine_ai/utils/pyq_authenticity.dart';
 import 'package:mpsc_combine_ai/widgets/ai_avatar_widgets.dart';
 import 'package:mpsc_combine_ai/widgets/chat_widgets.dart';
 import 'package:mpsc_combine_ai/widgets/rag_citation_block.dart';
@@ -592,7 +593,7 @@ class _AiTeacherScreenState extends State<AiTeacherScreen> {
           );
           break;
         case 'pyq':
-          title = 'PYQ';
+          title = kAiPyqConnectionLabel;
           child = RagPyqView(
             items: await ragGroundedLearningService.pyqConnections(
               topic: topic,
@@ -927,7 +928,7 @@ class _AiTeacherScreenState extends State<AiTeacherScreen> {
                       ),
                       ActionChip(
                         avatar: const Icon(Icons.history_edu_outlined, size: 18),
-                        label: const Text('PYQ'),
+                        label: const Text(kAiPyqConnectionLabel),
                         onPressed: _toolBusy ? null : () => _runStudyTool('pyq'),
                       ),
                       ActionChip(

@@ -5,6 +5,7 @@ import 'package:mpsc_combine_ai/screens/current_affairs_screen.dart';
 import 'package:mpsc_combine_ai/screens/jobs/job_alerts_screen.dart';
 import 'package:mpsc_combine_ai/screens/practice/smart_practice_test_series_screen.dart';
 import 'package:mpsc_combine_ai/screens/pyq_screen.dart';
+import 'package:mpsc_combine_ai/screens/study_content/study_content_screen.dart';
 import 'package:mpsc_combine_ai/screens/study_planner_screen.dart';
 import 'package:mpsc_combine_ai/screens/syllabus/syllabus_tracker_screen.dart';
 import 'package:mpsc_combine_ai/screens/weakness/ai_weakness_tracker_screen.dart';
@@ -20,6 +21,7 @@ enum MainFeatureId {
   syllabusTracker,
   jobAlerts,
   onDemandAiVideo,
+  studyContent,
 }
 
 class MainFeatureSpec {
@@ -105,6 +107,13 @@ const List<MainFeatureSpec> kMainFeatures = [
     icon: Icons.smart_display_rounded,
     buildScreen: _aiVideo,
   ),
+  MainFeatureSpec(
+    id: MainFeatureId.studyContent,
+    title: 'AI Study Content',
+    subtitle: 'Notes from approved books, then MCQ and AI-based PYQ Connections.',
+    icon: Icons.auto_stories_rounded,
+    buildScreen: _studyContent,
+  ),
 ];
 
 Widget _planner() => const StudyPlannerScreen();
@@ -116,6 +125,7 @@ Widget _doubts() => const AiTeacherScreen();
 Widget _syllabus() => const SyllabusTrackerScreen();
 Widget _jobs() => const JobAlertsScreen();
 Widget _aiVideo() => const AiTeacherHubScreen();
+Widget _studyContent() => const StudyContentScreen();
 
 void openMainFeature(BuildContext context, MainFeatureSpec feature) {
   Navigator.of(

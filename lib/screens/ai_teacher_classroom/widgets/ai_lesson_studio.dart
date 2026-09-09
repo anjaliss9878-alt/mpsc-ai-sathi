@@ -12,6 +12,7 @@ import 'package:mpsc_combine_ai/services/ai_teacher_system/generated_lesson.dart
 import 'package:mpsc_combine_ai/services/ai_teacher_system/lesson_notes_export.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/video_classroom_engine.dart';
 import 'package:mpsc_combine_ai/theme/app_colors.dart';
+import 'package:mpsc_combine_ai/utils/pyq_authenticity.dart';
 import 'package:mpsc_combine_ai/utils/student_copy.dart';
 import 'package:mpsc_combine_ai/widgets/dhada_progress.dart';
 import 'package:share_plus/share_plus.dart';
@@ -27,6 +28,8 @@ class AiLessonStudio extends StatefulWidget {
     this.initialTab = AiLessonStudioTab.video,
     this.audioFailed = false,
     this.videoPlaybackUrl,
+    this.audioRetrying = false,
+    this.onRetryAudio,
   });
 
   final GeneratedLesson lesson;
@@ -34,6 +37,8 @@ class AiLessonStudio extends StatefulWidget {
   final AiLessonStudioTab initialTab;
   final bool audioFailed;
   final String? videoPlaybackUrl;
+  final bool audioRetrying;
+  final VoidCallback? onRetryAudio;
 
   @override
   State<AiLessonStudio> createState() => _AiLessonStudioState();
@@ -44,11 +49,11 @@ class _AiLessonStudioState extends State<AiLessonStudio>
   late final TabController _tabs;
   VideoClassroomEngine? _engine;
   bool _started = false;
+  bool _audioAttachFailed = false;
   final GlobalKey<RenderedVideoPlayerState> _videoKey =
       GlobalKey<RenderedVideoPlayerState>();
 
-  bool get _hasMuxedVideo =>
-      (widget.videoPlaybackUrl ?? '').trim().isNotEmpty;
+  bool get _hasMuxedVideo => (widget.videoPlaybackUrl ?? '').trim().isNotEmpty;
 
   static const _labels = [
     'AI Video Lecture',
@@ -56,7 +61,7 @@ class _AiLessonStudioState extends State<AiLessonStudio>
     'Memory Tricks',
     'Quick Revision',
     'MCQ Test',
-    'PYQs',
+    kAiPyqConnectionLabel,
     'Ask AI Doubt',
   ];
 
@@ -76,8 +81,7 @@ class _AiLessonStudioState extends State<AiLessonStudio>
   void didUpdateWidget(covariant AiLessonStudio oldWidget) {
     super.didUpdateWidget(oldWidget);
     final wasMuxed = (oldWidget.videoPlaybackUrl ?? '').trim().isNotEmpty;
-    if (_hasMuxedVideo != wasMuxed ||
-        oldWidget.audio != widget.audio) {
+    if (_hasMuxedVideo != wasMuxed || oldWidget.audio != widget.audio) {
       _syncPlaybackOwner();
     }
   }
@@ -92,6 +96,7 @@ class _AiLessonStudioState extends State<AiLessonStudio>
     }
     if (widget.audio != null && _engine == null) {
       _started = false;
+      _audioAttachFailed = false;
       _attachEngine(widget.audio!);
     }
   }
@@ -101,6 +106,17 @@ class _AiLessonStudioState extends State<AiLessonStudio>
     _engine?.dispose();
     _engine = null;
     _started = false;
+  }
+
+  void _retryAttachedAudio() {
+    final audio = widget.audio;
+    if (audio == null) {
+      widget.onRetryAudio?.call();
+      return;
+    }
+    _tearDownEngine();
+    _audioAttachFailed = false;
+    _attachEngine(audio);
   }
 
   void _onTab() {
@@ -142,8 +158,20 @@ class _AiLessonStudioState extends State<AiLessonStudio>
         engine.stop();
         return;
       }
-      if (_tabs.index == 0) engine.play();
-    } catch (_) {}
+      if (!identical(_engine, engine)) return;
+      _audioAttachFailed = false;
+      setState(() {});
+      if (_tabs.index == 0) {
+        // Chrome blocks autoplay after a long TTS request; Play/Voice must
+        // start from the user click.
+        debugPrint('[TTS] playbackStarted=false');
+      }
+    } catch (e) {
+      debugPrint('[TTS] audio attach failed: ${e.runtimeType}');
+      if (!mounted || !identical(_engine, engine)) return;
+      _started = false;
+      setState(() => _audioAttachFailed = true);
+    }
   }
 
   void _openFullscreen() {
@@ -198,10 +226,15 @@ class _AiLessonStudioState extends State<AiLessonStudio>
               _VideoTab(
                 lesson: widget.lesson,
                 engine: _engine,
-                waiting: widget.audio == null &&
+                waiting:
+                    widget.audio == null &&
                     !widget.audioFailed &&
                     !_hasMuxedVideo,
-                audioFailed: widget.audioFailed,
+                audioFailed: widget.audioFailed || _audioAttachFailed,
+                audioRetrying: widget.audioRetrying,
+                onRetryAudio: _audioAttachFailed
+                    ? _retryAttachedAudio
+                    : widget.onRetryAudio,
                 videoPlaybackUrl: widget.videoPlaybackUrl,
                 videoKey: _videoKey,
                 autoplayVideo: _tabs.index == 0,
@@ -230,6 +263,8 @@ class _VideoTab extends StatelessWidget {
     required this.autoplayVideo,
     required this.onFullscreen,
     this.audioFailed = false,
+    this.audioRetrying = false,
+    this.onRetryAudio,
     this.videoPlaybackUrl,
   });
 
@@ -237,6 +272,8 @@ class _VideoTab extends StatelessWidget {
   final VideoClassroomEngine? engine;
   final bool waiting;
   final bool audioFailed;
+  final bool audioRetrying;
+  final VoidCallback? onRetryAudio;
   final String? videoPlaybackUrl;
   final GlobalKey<RenderedVideoPlayerState> videoKey;
   final bool autoplayVideo;
@@ -265,60 +302,78 @@ class _VideoTab extends StatelessWidget {
       player = _SlidePreview(lesson: lesson);
     } else {
       player = ListenableBuilder(
-            listenable: engine!,
-            builder: (context, _) {
-              final e = engine!;
-              return AiLessonPlayer(
-                slides: e.lesson.slides,
-                slideIndex: e.slideIndex,
-                revealCount: e.revealCount,
-                state: e.isPlaying
-                    ? TeacherAvatarState.speaking
-                    : TeacherAvatarState.idle,
-                isPlaying: e.isPlaying,
-                progress: e.progress,
-                subtitle: e.caption,
-                subtitleHighlight: e.speechProgress,
-                keywords: e.currentKeywords,
-                activeBulletIndex: e.activeBulletIndex,
-                speed: e.playbackSpeed,
-                muted: e.muted,
-                onPlayPause: e.togglePlayPause,
-                onReplay: e.replay,
-                onStop: e.stop,
-                onSpeedChanged: (s) => unawaited(e.setSpeed(s)),
-                onMuteChanged: (m) => unawaited(e.setMuted(m)),
-                onSeek: e.seekFraction,
-                onNext: e.next,
-                onPrevious: e.previous,
-                onSkipBack: () => e.skipSeconds(-10),
-                onSkipForward: () => e.skipSeconds(10),
-                zoom: e.zoomPulse,
-                topicName: e.lesson.topicName,
-                activeKeyword: e.activeKeyword,
-                memoryTrickText: e.premiumSpotlightText,
-                showMemoryTrick: e.showMemoryTrick,
-                conceptTransition: e.conceptTransition,
-                showAvatar: false,
-                embedded: false,
-              );
+        listenable: engine!,
+        builder: (context, _) {
+          final e = engine!;
+          return AiLessonPlayer(
+            slides: e.lesson.slides,
+            slideIndex: e.slideIndex,
+            revealCount: e.revealCount,
+            state: e.isPlaying
+                ? TeacherAvatarState.speaking
+                : TeacherAvatarState.idle,
+            isPlaying: e.isPlaying,
+            progress: e.progress,
+            subtitle: e.caption,
+            subtitleHighlight: e.speechProgress,
+            keywords: e.currentKeywords,
+            activeBulletIndex: e.activeBulletIndex,
+            speed: e.playbackSpeed,
+            muted: e.muted,
+            controlsEnabled: e.hasContinuousAudio || e.isPlaying || e.isPaused,
+            onPlayPause: () {
+              debugPrint('[TTS] buttonPressed=true');
+              e.togglePlayPause();
             },
+            onReplay: e.replay,
+            onStop: e.stop,
+            onSpeedChanged: (s) => unawaited(e.setSpeed(s)),
+            onMuteChanged: (m) => unawaited(e.setMuted(m)),
+            onSeek: e.seekFraction,
+            onNext: e.next,
+            onPrevious: e.previous,
+            onSkipBack: () => e.skipSeconds(-10),
+            onSkipForward: () => e.skipSeconds(10),
+            zoom: e.zoomPulse,
+            topicName: e.lesson.topicName,
+            activeKeyword: e.activeKeyword,
+            memoryTrickText: e.premiumSpotlightText,
+            showMemoryTrick: e.showMemoryTrick,
+            conceptTransition: e.conceptTransition,
+            showAvatar: false,
+            embedded: false,
           );
+        },
+      );
     }
 
     return Column(
       children: [
-        if (audioFailed)
+        if (audioFailed || audioRetrying)
           Material(
             color: const Color(0xFFFFF4E5),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              child: Text(
-                kAudioUnavailable,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w700,
-                  height: 1.4,
-                ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      audioRetrying
+                          ? 'AI Teacher चा आवाज पुन्हा तयार होत आहे...'
+                          : kAudioUnavailable,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        height: 1.4,
+                      ),
+                    ),
+                  ),
+                  if (!audioRetrying && onRetryAudio != null)
+                    FilledButton.icon(
+                      onPressed: onRetryAudio,
+                      icon: const Icon(Icons.refresh_rounded, size: 18),
+                      label: const Text('Retry Voice'),
+                    ),
+                ],
               ),
             ),
           ),
@@ -437,9 +492,7 @@ class _NotesTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = lesson.premium;
-    final facts = p.importantFacts.isNotEmpty
-        ? p.importantFacts
-        : lesson.notes;
+    final facts = p.importantFacts.isNotEmpty ? p.importantFacts : lesson.notes;
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
       children: [
@@ -468,7 +521,9 @@ class _NotesTab extends StatelessWidget {
         const SizedBox(height: 16),
         _CardBlock(
           title: 'परिचय',
-          body: p.introduction.trim().isNotEmpty ? p.introduction : lesson.summary,
+          body: p.introduction.trim().isNotEmpty
+              ? p.introduction
+              : lesson.summary,
         ),
         const SizedBox(height: 12),
         _CardBlock(
@@ -478,16 +533,16 @@ class _NotesTab extends StatelessWidget {
               .join('\n'),
         ),
         const SizedBox(height: 12),
-        _CardBlock(
-          title: 'तथ्ये',
-          body: facts.map((s) => '• $s').join('\n'),
-        ),
+        _CardBlock(title: 'तथ्ये', body: facts.map((s) => '• $s').join('\n')),
         const SizedBox(height: 12),
         _CardBlock(
           title: 'MPSC महत्त्वाचे मुद्दे',
-          body: (p.examTips.isNotEmpty ? p.examTips : lesson.notes.take(8).toList())
-              .map((s) => '• $s')
-              .join('\n'),
+          body:
+              (p.examTips.isNotEmpty
+                      ? p.examTips
+                      : lesson.notes.take(8).toList())
+                  .map((s) => '• $s')
+                  .join('\n'),
         ),
         const SizedBox(height: 12),
         _ExamBox(
@@ -495,8 +550,8 @@ class _NotesTab extends StatelessWidget {
           body: p.factBox.trim().isNotEmpty
               ? p.factBox
               : (p.examTraps.isNotEmpty
-                  ? p.examTraps.map((s) => '• $s').join('\n')
-                  : lesson.summary),
+                    ? p.examTraps.map((s) => '• $s').join('\n')
+                    : lesson.summary),
         ),
         const SizedBox(height: 12),
         _CardBlock(
@@ -680,7 +735,10 @@ class _McqTabState extends State<_McqTab> {
       return ListView(
         padding: const EdgeInsets.fromLTRB(20, 24, 20, 28),
         children: [
-          Text('गुण $_score / ${_mcqs.length}', style: ClassroomTheme.display(context)),
+          Text(
+            'गुण $_score / ${_mcqs.length}',
+            style: ClassroomTheme.display(context),
+          ),
           const SizedBox(height: 8),
           Text(
             _score >= (_mcqs.length * 0.7)
@@ -755,7 +813,10 @@ class _McqTabState extends State<_McqTab> {
                 borderRadius: BorderRadius.circular(12),
                 child: Padding(
                   padding: const EdgeInsets.all(14),
-                  child: Text(q.options[i], style: const TextStyle(height: 1.35)),
+                  child: Text(
+                    q.options[i],
+                    style: const TextStyle(height: 1.35),
+                  ),
                 ),
               ),
             ),
@@ -805,29 +866,38 @@ class _PyqTab extends StatelessWidget {
     final items = lesson.pyqs.isNotEmpty
         ? lesson.pyqs
         : lesson.premium.pyqInsight
-            .map((s) => GeneratedPyq(question: s, analysis: s))
-            .toList();
+              .map((s) => GeneratedPyq(question: s, analysis: s))
+              .toList();
     if (items.isEmpty) {
       return const Center(
-        child: Text(
-          'PYQs तयार होत आहेत. कृपया थोडा वेळ थांबा.',
-          style: TextStyle(fontWeight: FontWeight.w700),
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Text(
+            '$kAiPyqConnectionDisclaimer\nया धड्यात AI/syllabus connections नाहीत.',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontWeight: FontWeight.w700, height: 1.45),
+          ),
         ),
       );
     }
     return ListView.separated(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
-      itemCount: items.length,
+      itemCount: items.length + 1,
       separatorBuilder: (_, _) => const SizedBox(height: 12),
       itemBuilder: (context, i) {
-        final p = items[i];
-        final exam = p.exam.trim().isEmpty ? 'MPSC' : p.exam.trim();
-        final title = [
-          exam,
-          if (p.year.trim().isNotEmpty) p.year.trim(),
-        ].join(' · ');
+        if (i == 0) {
+          return const Text(
+            kAiPyqConnectionDisclaimer,
+            style: TextStyle(
+              fontWeight: FontWeight.w800,
+              color: AppColors.navy,
+              height: 1.4,
+            ),
+          );
+        }
+        final p = items[i - 1];
         return _CardBlock(
-          title: title,
+          title: kAiPyqConnectionLabel,
           body: [
             p.question,
             if (p.answer.trim().isNotEmpty) 'उत्तर: ${p.answer}',

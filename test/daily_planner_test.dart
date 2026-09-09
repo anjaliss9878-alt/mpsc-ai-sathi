@@ -351,6 +351,46 @@ void main() {
     expect(plan.adaptationNotes.join(' '), contains('Not enough student data'));
   });
 
+  test('empty Firestore syllabus still schedules a recorded weak chapter', () {
+    final plan = DailyPlannerService().buildPlan(
+      uid: 'u1',
+      prefs: const PlannerPrefs(
+        targetExam: 'Combine',
+        examDate: '2026-12-01',
+        dailyHours: 4,
+      ),
+      dateKey: '2026-08-21',
+      syllabus: const SyllabusProgressSnapshot(topics: []),
+      weakness: const WeaknessSnapshot(
+        signals: [
+          WeakTopicSignal(
+            label: 'Fundamental Rights',
+            scorePercent: 32,
+            source: 'test',
+            subjectId: 'pol',
+            chapterId: 'fr',
+            subjectTitle: 'Indian Polity',
+            priority: 40,
+          ),
+        ],
+        averageTestPercent: 32,
+        attemptsThisWeek: 1,
+      ),
+      now: now,
+    );
+    expect(
+      plan.tasks.any(
+        (t) =>
+            t.chapterId == 'fr' &&
+            t.priority >= 40 &&
+            (t.type == DailyPlanTaskType.revision ||
+                t.type == DailyPlanTaskType.practiceMcq ||
+                t.type == DailyPlanTaskType.pyq),
+      ),
+      isTrue,
+    );
+  });
+
   test('weak topic is prioritized for revision, targeted MCQs, and PYQs', () {
     final syllabus = SyllabusProgressSnapshot(
       topics: [

@@ -11,6 +11,27 @@ import 'package:mpsc_combine_ai/services/notes_repository.dart';
 import 'package:mpsc_combine_ai/services/storage_service.dart';
 import 'package:mpsc_combine_ai/widgets/async_state_widgets.dart';
 
+/// Admin Content Index default exam. Legacy `mpsc_combine` stays selectable.
+const String kAdminContentIndexDefaultExamId = kGroupBCombinedExamId;
+
+/// Which subjects the Content Index list shows for the selected exam.
+bool adminContentIndexShowsSubject(SubjectItem subject, String examId) {
+  if (examId.isEmpty) return true;
+  if (examId == kGroupBCombinedExamId) {
+    return subject.examId == kGroupBCombinedExamId ||
+        isGroupBCombinedSubjectId(subject.id);
+  }
+  return subject.examId == examId || subject.examId.isEmpty;
+}
+
+List<ExamItem> adminContentIndexExamChoices(List<ExamItem> exams) {
+  if (exams.isNotEmpty) return exams;
+  return [
+    ExamItem.groupBCombined(),
+    ExamItem.mpscCombine(),
+  ];
+}
+
 /// Admin Content Index — Exam → Subjects, then Chapters.
 class AdminSubjectsScreen extends StatefulWidget {
   const AdminSubjectsScreen({super.key});
@@ -21,7 +42,7 @@ class AdminSubjectsScreen extends StatefulWidget {
 
 class _AdminSubjectsScreenState extends State<AdminSubjectsScreen> {
   String _query = '';
-  String _examId = kDefaultExamId;
+  String _examId = kAdminContentIndexDefaultExamId;
   List<ExamItem> _exams = const [];
 
   @override
@@ -40,7 +61,7 @@ class _AdminSubjectsScreenState extends State<AdminSubjectsScreen> {
   List<SubjectItem> _filter(List<SubjectItem> subjects) {
     var list = subjects;
     if (_examId.isNotEmpty) {
-      list = list.where((s) => s.examId == _examId || s.examId.isEmpty).toList();
+      list = list.where((s) => adminContentIndexShowsSubject(s, _examId)).toList();
     }
     final q = _query.trim().toLowerCase();
     if (q.isEmpty) return list;
@@ -83,12 +104,13 @@ class _AdminSubjectsScreenState extends State<AdminSubjectsScreen> {
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                 child: DropdownButtonFormField<String>(
-                  value: _examId,
+                  value: adminContentIndexExamChoices(_exams)
+                          .any((e) => e.id == _examId)
+                      ? _examId
+                      : kAdminContentIndexDefaultExamId,
                   decoration: const InputDecoration(labelText: 'Exam'),
                   items: [
-                    for (final exam in _exams.isEmpty
-                        ? [ExamItem.mpscCombine()]
-                        : _exams)
+                    for (final exam in adminContentIndexExamChoices(_exams))
                       DropdownMenuItem(value: exam.id, child: Text(exam.title)),
                   ],
                   onChanged: (v) {

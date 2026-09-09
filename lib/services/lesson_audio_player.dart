@@ -7,6 +7,7 @@ import 'free_tts_engine.dart';
 import 'google_cloud_tts_service.dart';
 import 'ai_video_render/gemini_tts_synthesizer.dart';
 import 'package:mpsc_combine_ai/utils/audio_blob_url.dart';
+import 'package:mpsc_combine_ai/utils/web_html_audio.dart';
 
 enum ContinuousPlayResult { completed, paused, cancelled, error }
 
@@ -43,6 +44,32 @@ class LessonAudioPlayer {
   })  : _tts = tts ?? googleCloudTtsService,
         _freeTts = freeTts ?? FreeTtsEngine(),
         _geminiTts = geminiTts ?? GeminiTtsSynthesizer() {
+    _web.onEnded = () {
+      if (_disposed) return;
+      debugPrint('[TTS] playbackEnded=true');
+      _playingWeb = false;
+      _setState(LessonAudioState.idle);
+      final pending = _segmentDone;
+      if (pending != null && !pending.isCompleted) pending.complete();
+    };
+    _web.onTimeUpdate = (pos, total) {
+      if (_disposed || _progressController.isClosed) return;
+      if (total > Duration.zero) {
+        _duration = total;
+        _progressController.add(
+          (pos.inMilliseconds / total.inMilliseconds).clamp(0.0, 1.0),
+        );
+      }
+    };
+    _web.onError = (err) {
+      if (_disposed) return;
+      debugPrint('[TTS] playbackStarted=false');
+      debugPrint('[TTS] error=$err');
+      _playingWeb = false;
+      _setState(LessonAudioState.error);
+      _lastError = err;
+      if (!_errorController.isClosed) _errorController.add(err);
+    };
     _freeTts.onProgress = (p) {
       if (_activeBackend == _AudioBackend.free &&
           !_progressController.isClosed) {
@@ -55,6 +82,7 @@ class LessonAudioPlayer {
   final FreeTtsEngine _freeTts;
   final GeminiTtsSynthesizer _geminiTts;
   final AudioPlayer _player = AudioPlayer();
+  final WebHtmlAudio _web = WebHtmlAudio();
 
   LessonAudioState _state = LessonAudioState.idle;
   String? _lastError;
@@ -89,6 +117,7 @@ class LessonAudioPlayer {
   bool _disposed = false;
   String? _blobUrl;
   bool _continuousReady = false;
+  bool _playingWeb = false;
 
   final _stateController = StreamController<LessonAudioState>.broadcast();
   final _progressController = StreamController<double>.broadcast();
@@ -105,8 +134,11 @@ class LessonAudioPlayer {
       _state == LessonAudioState.loading ||
       _state == LessonAudioState.buffering;
   bool get pauseRequested => _paused;
-  Duration get position => _player.position;
-  Duration get duration => _duration;
+  Duration get position =>
+      kIsWeb && _continuousReady ? _web.position : _player.position;
+  Duration get duration => kIsWeb && _continuousReady && _web.duration > Duration.zero
+      ? _web.duration
+      : _duration;
 
   /// Current playback session token — useful for tests / UI guards.
   int get speakGeneration => _speakGeneration;
@@ -230,23 +262,38 @@ class LessonAudioPlayer {
     try {
       await _player.stop();
     } catch (_) {}
+    try {
+      _web.stop();
+      _playingWeb = false;
+    } catch (_) {}
     _releaseBlob();
     _continuousReady = false;
     _activeBackend = _AudioBackend.continuous;
 
     AudioSource source;
+    final playMime =
+        GeminiTtsSynthesizer.isWavContainer(bytes) ? 'audio/wav' : mimeType;
     if (kIsWeb) {
-      _blobUrl = createAudioBlobUrl(bytes, mimeType);
+      _blobUrl = createAudioBlobUrl(bytes, playMime);
       if (_blobUrl != null && _blobUrl!.isNotEmpty) {
-        source = AudioSource.uri(Uri.parse(_blobUrl!));
-      } else {
-        source = AudioSource.uri(
-          Uri.dataFromBytes(bytes, mimeType: mimeType),
-        );
+        _web.attachUrl(_blobUrl!);
+        _web.setPlaybackRate(_speed);
+        _web.setMuted(_muted);
+        _continuousReady = true;
+        _activeBackend = _AudioBackend.continuous;
+        _duration = GeminiTtsSynthesizer.wavDuration(bytes);
+        _setState(LessonAudioState.idle);
+        if (!_progressController.isClosed) {
+          _progressController.add(0);
+        }
+        return _duration;
       }
+      source = AudioSource.uri(
+        Uri.dataFromBytes(bytes, mimeType: playMime),
+      );
     } else {
       source = AudioSource.uri(
-        Uri.dataFromBytes(bytes, mimeType: mimeType),
+        Uri.dataFromBytes(bytes, mimeType: playMime),
       );
     }
     await _player.setAudioSource(source);
@@ -283,6 +330,14 @@ class LessonAudioPlayer {
     _paused = false;
   }
 
+  /// Call from Voice/Play [onPressed] with no awaits first (Chrome gesture).
+  void unlockWebPlayback() {
+    if (_disposed || !kIsWeb || !_continuousReady) return;
+    _web.unlockAndPlay();
+    _playingWeb = true;
+    debugPrint('[TTS] playbackStarted=true');
+  }
+
   /// Plays the preloaded full-lesson file from [from] until the end or Stop.
   /// Does not clear an existing pause request — Pause stays authoritative.
   Future<ContinuousPlayResult> playContinuous({
@@ -293,6 +348,35 @@ class LessonAudioPlayer {
       throw StateError('preloadContinuous must complete before playContinuous');
     }
     if (_paused) return ContinuousPlayResult.paused;
+    if (kIsWeb && _web.hasSource) {
+      final gen = ++_speakGeneration;
+      _activeBackend = _AudioBackend.continuous;
+      _segmentDone = Completer<void>();
+      _web.setPlaybackRate(_speed);
+      _web.setMuted(_muted);
+      _web.seek(from);
+      if (!_playingWeb) {
+        _web.unlockAndPlay();
+        debugPrint('[TTS] playbackStarted=true');
+      }
+      _setState(LessonAudioState.playing);
+      while (gen == _speakGeneration && !_disposed && !_paused) {
+        if (_state == LessonAudioState.error) {
+          return ContinuousPlayResult.error;
+        }
+        if (_segmentDone?.isCompleted ?? false) break;
+        await Future<void>.delayed(const Duration(milliseconds: 80));
+      }
+      if (_disposed) return ContinuousPlayResult.cancelled;
+      if (gen != _speakGeneration) return ContinuousPlayResult.cancelled;
+      if (_paused) return ContinuousPlayResult.paused;
+      if (_state == LessonAudioState.idle ||
+          (_segmentDone?.isCompleted ?? false)) {
+        debugPrint('[TTS] playbackEnded=true');
+        return ContinuousPlayResult.completed;
+      }
+      return ContinuousPlayResult.cancelled;
+    }
     final gen = ++_speakGeneration;
     _activeBackend = _AudioBackend.continuous;
     _segmentDone = Completer<void>();
@@ -330,12 +414,20 @@ class LessonAudioPlayer {
       _setState(LessonAudioState.paused);
       await _waitWhilePaused(gen);
     } else {
-      await _player.play();
-      if (_paused) {
-        try {
-          await _player.pause();
-        } catch (_) {}
-        _setState(LessonAudioState.paused);
+      try {
+        await _player.play();
+        debugPrint('[TTS] playbackStarted=true');
+        if (_paused) {
+          try {
+            await _player.pause();
+          } catch (_) {}
+          _setState(LessonAudioState.paused);
+        }
+      } catch (e) {
+        debugPrint('[TTS] playbackStarted=false');
+        debugPrint('[TTS] error=${e.runtimeType}');
+        _setState(LessonAudioState.error);
+        rethrow;
       }
     }
     await _waitUntilCompleteOrCancelled(gen);
@@ -700,6 +792,9 @@ class LessonAudioPlayer {
       try {
       if (_activeBackend == _AudioBackend.free) {
         await _freeTts.pause();
+      } else if (kIsWeb && _continuousReady) {
+        _web.pause();
+        _playingWeb = false;
       } else if (_activeBackend != _AudioBackend.none) {
         await _player.pause();
       }
@@ -721,6 +816,10 @@ class LessonAudioPlayer {
     try {
       if (_activeBackend == _AudioBackend.free) {
         await _freeTts.resume();
+        _setState(LessonAudioState.playing);
+      } else if (kIsWeb && _continuousReady) {
+        _web.unlockAndPlay();
+        _playingWeb = true;
         _setState(LessonAudioState.playing);
       } else if (_activeBackend != _AudioBackend.none) {
         await _player.play();
@@ -766,6 +865,10 @@ class LessonAudioPlayer {
     if (_disposed) return;
     try {
       await _freeTts.stop();
+    } catch (_) {}
+    try {
+      _web.stop();
+      _playingWeb = false;
     } catch (_) {}
     try {
       await _player.stop();
@@ -849,6 +952,9 @@ class LessonAudioPlayer {
     await _unbindProgress();
     _releaseBlob();
     _continuousReady = false;
+    try {
+      _web.dispose();
+    } catch (_) {}
     try {
       await _player.dispose();
     } catch (_) {}

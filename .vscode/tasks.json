@@ -1,0 +1,35 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Ensure AI classroom worker",
+      "type": "shell",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\tool\\ensure_classroom_video_backend.ps1"
+      ],
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "ai-classroom-worker",
+        "pattern": {
+          "regexp": "^(.*)$",
+          "message": 1
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "^Ensuring AI classroom worker",
+          "endsPattern": "^(AI classroom worker already ready|Starting classroom video backend)"
+        }
+      },
+      "presentation": {
+        "reveal": "silent",
+        "panel": "dedicated",
+        "clear": false
+      }
+    }
+  ]
+}

@@ -74,11 +74,64 @@ class ProfileRepository {
     required String name,
     required String mobile,
     required String targetExam,
+    double? dailyStudyHours,
+    String? studyMode,
+    String? preparationStage,
+    String? preferredLanguage,
   }) async {
-    await _firestore.collection(studentsCollection).doc(uid).set({
+    final data = <String, dynamic>{
       'name': name,
       'mobile': mobile,
       'targetExam': targetExam,
+      'updatedAt': DateTime.now().toIso8601String(),
+    };
+    if (dailyStudyHours != null) {
+      data['dailyStudyHours'] = dailyStudyHours.clamp(1, 12);
+    }
+    if (studyMode != null) data['studyMode'] = studyMode;
+    if (preparationStage != null) data['preparationStage'] = preparationStage;
+    if (preferredLanguage != null) {
+      data['preferredLanguage'] = preferredLanguage;
+    }
+    await _firestore
+        .collection(studentsCollection)
+        .doc(uid)
+        .set(data, SetOptions(merge: true));
+  }
+
+  Future<void> saveOnboarding({
+    required String uid,
+    required String name,
+    required String email,
+    required String targetExam,
+    required double dailyStudyHours,
+    required String studyMode,
+    required String preparationStage,
+    required String preferredLanguage,
+  }) async {
+    final now = DateTime.now().toIso8601String();
+    final existing = await getProfile(uid);
+    await _firestore.collection(studentsCollection).doc(uid).set({
+      'name': name,
+      'email': email,
+      'targetExam': targetExam,
+      'dailyStudyHours': dailyStudyHours.clamp(1, 12),
+      'studyMode': studyMode,
+      'preparationStage': preparationStage,
+      'preferredLanguage': preferredLanguage,
+      'onboardingCompleted': true,
+      'diagnosticCompleted': false,
+      'createdAt':
+          (existing != null && existing.createdAt.isNotEmpty)
+              ? existing.createdAt
+              : now,
+      'updatedAt': now,
+    }, SetOptions(merge: true));
+  }
+
+  Future<void> markDiagnosticCompleted(String uid) async {
+    await _firestore.collection(studentsCollection).doc(uid).set({
+      'diagnosticCompleted': true,
       'updatedAt': DateTime.now().toIso8601String(),
     }, SetOptions(merge: true));
   }
@@ -89,11 +142,14 @@ class ProfileRepository {
     required String targetExam,
     required String examDate,
     required double dailyStudyHours,
+    int? preparationDurationDays,
   }) async {
     await _firestore.collection(studentsCollection).doc(uid).set({
       'targetExam': targetExam,
       'examDate': examDate,
       'dailyStudyHours': dailyStudyHours.clamp(1, 12),
+      if (preparationDurationDays != null)
+        'preparationDurationDays': preparationDurationDays,
       'updatedAt': DateTime.now().toIso8601String(),
     }, SetOptions(merge: true));
   }

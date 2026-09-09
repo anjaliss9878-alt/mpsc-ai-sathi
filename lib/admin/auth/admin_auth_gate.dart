@@ -4,6 +4,7 @@ import 'package:mpsc_combine_ai/admin/auth/admin_login_screen.dart';
 import 'package:mpsc_combine_ai/services/admin_repository.dart';
 import 'package:mpsc_combine_ai/services/auth_service.dart';
 import 'package:mpsc_combine_ai/theme/app_colors.dart';
+import 'package:mpsc_combine_ai/widgets/app_brand_logo.dart';
 
 /// Gatekeeper for the Admin Panel:
 /// 1. Signed out -> [AdminLoginScreen].
@@ -54,9 +55,18 @@ class _LoadingScaffold extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
+    return Scaffold(
       backgroundColor: AppColors.background,
-      body: Center(child: CircularProgressIndicator(color: AppColors.orange)),
+      body: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: const [
+            AppBrandLogo(size: 72, borderRadius: 16),
+            SizedBox(height: 20),
+            CircularProgressIndicator(color: AppColors.orange),
+          ],
+        ),
+      ),
     );
   }
 }

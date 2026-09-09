@@ -7,7 +7,13 @@ import 'package:mpsc_combine_ai/utils/json_list.dart';
 /// as the existing weekly [StudyPlan] docs, distinguished by [kind]).
 enum DailyPlanTaskType { study, revision, practiceMcq, pyq, testQuiz }
 
-enum DailyPlanTaskStatus { pending, completed, skipped, rescheduled }
+enum DailyPlanTaskStatus {
+  pending,
+  completed,
+  skipped,
+  rescheduled,
+  carriedForward,
+}
 
 class DailyPlanTask {
   const DailyPlanTask({
@@ -49,8 +55,11 @@ class DailyPlanTask {
   /// Higher values run first. Weak-topic work is scored above routine study.
   final int priority;
 
-  bool get isOpen => status == DailyPlanTaskStatus.pending;
+  bool get isOpen =>
+      status == DailyPlanTaskStatus.pending ||
+      status == DailyPlanTaskStatus.carriedForward;
   bool get isDone => status == DailyPlanTaskStatus.completed;
+  bool get isCarriedForward => status == DailyPlanTaskStatus.carriedForward;
 
   String get typeLabel => switch (type) {
         DailyPlanTaskType.study => 'Study',
@@ -61,10 +70,19 @@ class DailyPlanTask {
       };
 
   String get priorityLabel {
-    if (priority >= 40) return 'High';
-    if (priority >= 20) return 'Medium';
-    return 'Normal';
+    if (priority >= 80) return 'Very High';
+    if (priority >= 50) return 'High';
+    if (priority >= 25) return 'Medium';
+    return 'Maintenance';
   }
+
+  String get statusLabel => switch (status) {
+        DailyPlanTaskStatus.completed => 'Completed',
+        DailyPlanTaskStatus.carriedForward => 'Carried forward',
+        DailyPlanTaskStatus.skipped => 'Skipped',
+        DailyPlanTaskStatus.rescheduled => 'Rescheduled',
+        DailyPlanTaskStatus.pending => 'Pending',
+      };
 
   String get goalTaskKey => switch (type) {
         DailyPlanTaskType.study => 'notes',
@@ -161,6 +179,8 @@ DailyPlanTaskStatus dailyPlanTaskStatusFrom(String? raw) {
       return DailyPlanTaskStatus.skipped;
     case 'rescheduled':
       return DailyPlanTaskStatus.rescheduled;
+    case 'carriedForward':
+      return DailyPlanTaskStatus.carriedForward;
     default:
       return DailyPlanTaskStatus.pending;
   }
@@ -177,6 +197,14 @@ class DailyStudyPlan {
     this.examDate = '',
     this.adaptationNotes = const [],
     this.generatedAt,
+    this.dayNumber = 1,
+    this.horizonDays = 0,
+    this.syllabusPercent = 0,
+    this.topicsCompleted = 0,
+    this.topicsTotal = 0,
+    this.daysRemaining = 0,
+    this.trackStatus = '',
+    this.carriedForwardCount = 0,
   });
 
   static const String kind = 'daily';
@@ -189,6 +217,21 @@ class DailyStudyPlan {
   final List<DailyPlanTask> tasks;
   final List<String> adaptationNotes;
   final DateTime? generatedAt;
+  final int dayNumber;
+  final int horizonDays;
+  final double syllabusPercent;
+  final int topicsCompleted;
+  final int topicsTotal;
+  final int daysRemaining;
+  final String trackStatus;
+  final int carriedForwardCount;
+
+  String get trackStatusLabel => switch (trackStatus) {
+        'behind' => 'Behind schedule',
+        'at_risk' => 'At risk',
+        'on_track' => 'On track',
+        _ => trackStatus.isEmpty ? 'On track' : trackStatus,
+      };
 
   List<DailyPlanTask> get openTasks =>
       tasks.where((t) => t.isOpen).toList(growable: false);
@@ -223,6 +266,14 @@ class DailyStudyPlan {
     List<DailyPlanTask>? tasks,
     List<String>? adaptationNotes,
     DateTime? generatedAt,
+    int? dayNumber,
+    int? horizonDays,
+    double? syllabusPercent,
+    int? topicsCompleted,
+    int? topicsTotal,
+    int? daysRemaining,
+    String? trackStatus,
+    int? carriedForwardCount,
   }) {
     return DailyStudyPlan(
       dateKey: dateKey,
@@ -233,6 +284,14 @@ class DailyStudyPlan {
       tasks: tasks ?? this.tasks,
       adaptationNotes: adaptationNotes ?? this.adaptationNotes,
       generatedAt: generatedAt ?? this.generatedAt,
+      dayNumber: dayNumber ?? this.dayNumber,
+      horizonDays: horizonDays ?? this.horizonDays,
+      syllabusPercent: syllabusPercent ?? this.syllabusPercent,
+      topicsCompleted: topicsCompleted ?? this.topicsCompleted,
+      topicsTotal: topicsTotal ?? this.topicsTotal,
+      daysRemaining: daysRemaining ?? this.daysRemaining,
+      trackStatus: trackStatus ?? this.trackStatus,
+      carriedForwardCount: carriedForwardCount ?? this.carriedForwardCount,
     );
   }
 
@@ -255,6 +314,14 @@ class DailyStudyPlan {
         'tasks': tasks.map((t) => t.toMap()).toList(),
         'adaptationNotes': adaptationNotes,
         'generatedAt': (generatedAt ?? DateTime.now()).toIso8601String(),
+        'dayNumber': dayNumber,
+        'horizonDays': horizonDays,
+        'syllabusPercent': syllabusPercent,
+        'topicsCompleted': topicsCompleted,
+        'topicsTotal': topicsTotal,
+        'daysRemaining': daysRemaining,
+        'trackStatus': trackStatus,
+        'carriedForwardCount': carriedForwardCount,
       };
 
   factory DailyStudyPlan.fromMap(Map<String, dynamic> map, String dateKey) {
@@ -271,6 +338,14 @@ class DailyStudyPlan {
       ],
       adaptationNotes: asStringList(map['adaptationNotes']),
       generatedAt: DateTime.tryParse(map['generatedAt'] as String? ?? ''),
+      dayNumber: asInt(map['dayNumber'], defaultValue: 1),
+      horizonDays: asInt(map['horizonDays']),
+      syllabusPercent: (map['syllabusPercent'] as num?)?.toDouble() ?? 0,
+      topicsCompleted: asInt(map['topicsCompleted']),
+      topicsTotal: asInt(map['topicsTotal']),
+      daysRemaining: asInt(map['daysRemaining']),
+      trackStatus: map['trackStatus'] as String? ?? '',
+      carriedForwardCount: asInt(map['carriedForwardCount']),
     );
   }
 
@@ -287,11 +362,27 @@ class WeeklyPlannerProgress {
     required this.completedTasks,
     required this.totalTasks,
     required this.daysWithPlan,
+    this.mcqCompleted = 0,
+    this.pyqCompleted = 0,
+    this.missedTasks = 0,
+    this.weakSubjects = const [],
+    this.strongSubjects = const [],
+    this.nextPriorities = const [],
+    this.syllabusPercent = 0,
+    this.topicsCompleted = 0,
   });
 
   final int completedTasks;
   final int totalTasks;
   final int daysWithPlan;
+  final int mcqCompleted;
+  final int pyqCompleted;
+  final int missedTasks;
+  final List<String> weakSubjects;
+  final List<String> strongSubjects;
+  final List<String> nextPriorities;
+  final double syllabusPercent;
+  final int topicsCompleted;
 
   double get progress => totalTasks == 0 ? 0 : completedTasks / totalTasks;
 }

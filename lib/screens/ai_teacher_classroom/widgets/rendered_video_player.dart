@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:mpsc_combine_ai/screens/ai_teacher_classroom/widgets/rendered_video_controller.dart';
 import 'package:mpsc_combine_ai/services/auth_service.dart';
@@ -35,9 +36,9 @@ class RenderedVideoPlayerState extends State<RenderedVideoPlayer> {
   String? _error;
   bool _ready = false;
   double _speed = 0.9;
-  double _startFraction = 0;
   bool _muted = false;
   Timer? _saveTimer;
+  int _bootSeq = 0;
 
   static const _speeds = <double>[0.75, 0.9, 1.0, 1.25, 1.5];
 
@@ -57,49 +58,60 @@ class RenderedVideoPlayerState extends State<RenderedVideoPlayer> {
   }
 
   Future<void> _boot() async {
-    await _loadProgress();
-    await _init();
+    final seq = ++_bootSeq;
+    final startFraction = await _loadProgress();
+    if (!mounted || seq != _bootSeq) return;
+    await _init(seq: seq, startFraction: startFraction);
   }
 
-  Future<void> _loadProgress() async {
+  Future<double> _loadProgress() async {
     final uid = authService.currentUser?.uid;
     final id = widget.progressId.trim();
-    if (uid == null || id.isEmpty) return;
+    if (uid == null || id.isEmpty) return 0;
     try {
       final p = await lessonProgressRepository.getProgress(uid, id);
-      _startFraction = (p?.lastPositionFraction ?? 0).clamp(0.0, 0.98);
-    } catch (_) {}
+      return (p?.lastPositionFraction ?? 0).clamp(0.0, 0.98);
+    } catch (_) {
+      return 0;
+    }
   }
 
-  Future<void> _init() async {
-    await _controller?.dispose();
+  Future<void> _init({required int seq, required double startFraction}) async {
+    final previous = _controller;
     _controller = null;
     _ready = false;
     _error = null;
     if (mounted) setState(() {});
+    await previous?.dispose();
+    if (!mounted || seq != _bootSeq) return;
 
+    VideoPlayerController? next;
     try {
-      final c = createRenderedVideoController(
+      next = createRenderedVideoController(
         source: widget.source,
         assetKey: widget.assetKey,
       );
-      _controller = c;
-      await c.initialize();
-      await c.setLooping(false);
-      await c.setPlaybackSpeed(_speed);
-      await c.setVolume(_muted ? 0 : 1);
-      if (_startFraction > 0.02) {
-        final d = c.value.duration;
-        await c.seekTo(
-          Duration(milliseconds: (d.inMilliseconds * _startFraction).round()),
+      await next.initialize();
+      await next.setLooping(false);
+      await next.setPlaybackSpeed(_speed);
+      await next.setVolume(_muted ? 0 : 1);
+      if (startFraction > 0.02) {
+        final d = next.value.duration;
+        await next.seekTo(
+          Duration(milliseconds: (d.inMilliseconds * startFraction).round()),
         );
       }
-      if (widget.autoplay) await c.play();
-      c.addListener(_onTick);
-      if (!mounted) return;
+      if (widget.autoplay && !kIsWeb) await next.play();
+      if (!mounted || seq != _bootSeq) {
+        await next.dispose();
+        return;
+      }
+      _controller = next;
+      next.addListener(_onTick);
       setState(() => _ready = true);
     } catch (e) {
-      if (!mounted) return;
+      await next?.dispose();
+      if (!mounted || seq != _bootSeq) return;
       setState(() => _error = studentFacingMediaError(e));
     }
   }
@@ -172,7 +184,9 @@ class RenderedVideoPlayerState extends State<RenderedVideoPlayer> {
     if (c == null || !c.value.isInitialized) return;
     final d = c.value.duration;
     await c.seekTo(
-      Duration(milliseconds: (d.inMilliseconds * fraction.clamp(0.0, 1.0)).round()),
+      Duration(
+        milliseconds: (d.inMilliseconds * fraction.clamp(0.0, 1.0)).round(),
+      ),
     );
     if (mounted) setState(() {});
   }
@@ -232,6 +246,7 @@ class RenderedVideoPlayerState extends State<RenderedVideoPlayer> {
 
   @override
   void dispose() {
+    _bootSeq++;
     _saveTimer?.cancel();
     unawaited(_saveProgress());
     _controller?.removeListener(_onTick);
@@ -250,10 +265,21 @@ class RenderedVideoPlayerState extends State<RenderedVideoPlayer> {
           color: AppColors.navy.withValues(alpha: 0.06),
           borderRadius: BorderRadius.circular(16),
         ),
-        child: Text(
-          _error!,
-          textAlign: TextAlign.center,
-          style: const TextStyle(color: AppColors.textSecondary),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              _error!,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: AppColors.textSecondary),
+            ),
+            const SizedBox(height: 10),
+            OutlinedButton.icon(
+              onPressed: () => unawaited(_boot()),
+              icon: const Icon(Icons.refresh_rounded),
+              label: const Text('Retry video'),
+            ),
+          ],
         ),
       );
     }
@@ -272,8 +298,9 @@ class RenderedVideoPlayerState extends State<RenderedVideoPlayer> {
         ClipRRect(
           borderRadius: BorderRadius.circular(16),
           child: AspectRatio(
-            aspectRatio:
-                c.value.aspectRatio == 0 ? 16 / 9 : c.value.aspectRatio,
+            aspectRatio: c.value.aspectRatio == 0
+                ? 16 / 9
+                : c.value.aspectRatio,
             child: VideoPlayer(c),
           ),
         ),
@@ -347,7 +374,10 @@ class _TransportBar extends StatelessWidget {
               IconButton(
                 tooltip: 'Back',
                 onPressed: onBack,
-                icon: const Icon(Icons.arrow_back_rounded, color: AppColors.navy),
+                icon: const Icon(
+                  Icons.arrow_back_rounded,
+                  color: AppColors.navy,
+                ),
               ),
             IconButton(
               tooltip: controller.value.isPlaying ? 'Pause' : 'Play',
@@ -407,8 +437,10 @@ class _TransportBar extends StatelessWidget {
             IconButton(
               tooltip: 'Picture in picture',
               onPressed: onPip,
-              icon: const Icon(Icons.picture_in_picture_alt_rounded,
-                  color: AppColors.navy),
+              icon: const Icon(
+                Icons.picture_in_picture_alt_rounded,
+                color: AppColors.navy,
+              ),
             ),
             IconButton(
               tooltip: 'Fullscreen',

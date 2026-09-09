@@ -15,14 +15,12 @@ Future<void> main() async {
       as Map<String, dynamic>;
   final apiKey = '${defines['AI_API_KEY'] ?? ''}'.trim();
   final model = '${defines['AI_MODEL'] ?? 'gemini-flash-latest'}'.trim();
-  final elevenKey = '${defines['ELEVENLABS_API_KEY'] ?? ''}'.trim();
 
   final results = <String, String>{};
   final client = http.Client();
 
   try {
     results['Gemini key loaded'] = apiKey.isNotEmpty ? 'PASS' : 'FAIL';
-    results['ElevenLabs key loaded'] = elevenKey.isNotEmpty ? 'PASS' : 'FAIL';
 
     final detected = detectMpscTeachingSubject('मान्सून');
     results['Subject detect मान्सून'] =
@@ -128,40 +126,8 @@ Future<void> main() async {
       }
     }
 
-    if (elevenKey.isEmpty) {
-      results['ElevenLabs connection'] = 'FAIL (key empty)';
-    } else {
-      try {
-        final voice = MpscTeachingSubject.geography.elevenLabsVoiceId;
-        final uri = Uri.parse(
-          'https://api.elevenlabs.io/v1/text-to-speech/$voice',
-        );
-        final response = await client
-            .post(
-              uri,
-              headers: {
-                'Content-Type': 'application/json',
-                'xi-api-key': elevenKey,
-                'Accept': 'audio/mpeg',
-              },
-              body: jsonEncode({
-                'text':
-                    'नमस्कार विद्यार्थ्यांनो, आज आपण मान्सूनचा अभ्यास करणार आहोत.',
-                'model_id': '${defines['ELEVENLABS_MODEL'] ?? 'eleven_multilingual_v2'}',
-              }),
-            )
-            .timeout(const Duration(seconds: 60));
-        results['ElevenLabs connection'] =
-            response.statusCode >= 200 &&
-                    response.statusCode < 300 &&
-                    response.bodyBytes.length > 800
-                ? 'PASS (${response.bodyBytes.length} bytes)'
-                : 'FAIL HTTP ${response.statusCode}';
-      } catch (e, st) {
-        stderr.writeln('ElevenLabs failed: $e\n$st');
-        results['ElevenLabs connection'] = 'FAIL';
-      }
-    }
+    results['Gemini TTS'] =
+        'server /ai/tts (gemini-3.1-flash-tts-preview)';
   } finally {
     client.close();
   }

@@ -7,6 +7,10 @@ const String kRagInsufficientEvidence =
 const String kRagNoPyqFound =
     'निवडलेल्या स्रोतांमध्ये संबंधित PYQ उपलब्ध नाहीत.';
 
+/// Student Study Content: no published+Ready RAG evidence for the topic.
+const String kStudyContentInsufficient =
+    'Insufficient approved study material';
+
 /// Source-grounded citation. Page is included only when extraction observed it.
 class RagCitation {
   const RagCitation({

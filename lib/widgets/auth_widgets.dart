@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:mpsc_combine_ai/theme/app_colors.dart';
+import 'package:mpsc_combine_ai/widgets/app_brand_logo.dart';
 
 /// Shared layout for Login/Signup/Forgot-Password screens: a navy/orange
 /// gradient badge + title over a white card containing [child] (the form),
@@ -12,6 +13,7 @@ class AuthScaffold extends StatelessWidget {
     required this.icon,
     required this.child,
     this.showBackButton = false,
+    this.showBrandLogo = false,
   });
 
   final String title;
@@ -19,6 +21,7 @@ class AuthScaffold extends StatelessWidget {
   final IconData icon;
   final Widget child;
   final bool showBackButton;
+  final bool showBrandLogo;
 
   @override
   Widget build(BuildContext context) {
@@ -45,24 +48,27 @@ class AuthScaffold extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   const SizedBox(height: 8),
-                  Container(
-                    width: 72,
-                    height: 72,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [
-                          AppColors.navyDark,
-                          AppColors.navy,
-                          AppColors.navyLight,
-                        ],
+                  if (showBrandLogo)
+                    const Center(child: AppBrandLogo(size: 112, borderRadius: 24))
+                  else
+                    Container(
+                      width: 72,
+                      height: 72,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [
+                            AppColors.navyDark,
+                            AppColors.navy,
+                            AppColors.navyLight,
+                          ],
+                        ),
+                        borderRadius: BorderRadius.circular(20),
                       ),
-                      borderRadius: BorderRadius.circular(20),
+                      child: Icon(icon, color: AppColors.orange, size: 34),
                     ),
-                    child: Icon(icon, color: AppColors.orange, size: 34),
-                  ),
                   const SizedBox(height: 20),
                   Text(
                     title,

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:mpsc_combine_ai/models/chapter_item.dart';
 import 'package:mpsc_combine_ai/screens/ai_teacher_classroom/classroom_theme.dart';
@@ -14,15 +15,17 @@ import 'package:mpsc_combine_ai/services/ai_teacher_system/full_lesson_narration
 import 'package:mpsc_combine_ai/services/ai_teacher_system/generated_lesson.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/lesson_generation_service.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/subject_teacher.dart';
+import 'package:mpsc_combine_ai/services/ai_backend_base.dart';
 import 'package:mpsc_combine_ai/services/auth_service.dart';
 import 'package:mpsc_combine_ai/services/classroom_video/classroom_video_client.dart';
-import 'package:mpsc_combine_ai/services/elevenlabs_tts_service.dart';
+import 'package:mpsc_combine_ai/services/ai_tts_service.dart';
 import 'package:mpsc_combine_ai/services/student_progress_repository.dart';
 import 'package:mpsc_combine_ai/theme/app_colors.dart';
+import 'package:mpsc_combine_ai/utils/ai_generation_error.dart';
 import 'package:mpsc_combine_ai/utils/student_copy.dart';
 import 'package:mpsc_combine_ai/widgets/dhada_progress.dart';
 
-/// Topic → subject teacher → slides → ElevenLabs voice → muxed video.
+/// Topic → subject teacher → slides → Gemini TTS voice → muxed video.
 class AiTeacherClassroomScreen extends StatefulWidget {
   const AiTeacherClassroomScreen({
     super.key,
@@ -63,6 +66,7 @@ class _AiTeacherClassroomScreenState extends State<AiTeacherClassroomScreen> {
   String? _videoPlaybackUrl;
   String _stageMessage = kDhadaPreparing;
   String? _error;
+  int _generateSeq = 0;
 
   static const _teachers = MpscTeachingSubject.values;
 
@@ -74,7 +78,8 @@ class _AiTeacherClassroomScreenState extends State<AiTeacherClassroomScreen> {
     _topicFocus = FocusNode();
     _generateFocus = FocusNode(canRequestFocus: false, skipTraversal: true);
     _webTopicSync.attach(_topicCtrl, _topicFocus);
-    _teacher = widget.teachingSubject ??
+    _teacher =
+        widget.teachingSubject ??
         detectMpscTeachingSubject(seed, hint: widget.subjectTitle);
     _topicCtrl.addListener(_onTopicChanged);
     if ((widget.autoTeachChapter || seed.trim().isNotEmpty) &&
@@ -124,6 +129,7 @@ class _AiTeacherClassroomScreenState extends State<AiTeacherClassroomScreen> {
       return;
     }
     if (_busy) return;
+    final generateSeq = ++_generateSeq;
 
     aiChapterLog('ui_generate_pressed', {
       'topic': topic,
@@ -137,7 +143,7 @@ class _AiTeacherClassroomScreenState extends State<AiTeacherClassroomScreen> {
       _videoPlaybackUrl = null;
       _audioFailed = false;
       _busy = true;
-      _stageMessage = 'Generating slides...';
+      _stageMessage = 'Preparing lesson...';
     });
 
     try {
@@ -151,9 +157,7 @@ class _AiTeacherClassroomScreenState extends State<AiTeacherClassroomScreen> {
       );
       if (!mounted) return;
       if (lesson.slides.isEmpty) {
-        throw const LessonGenerationException(
-          'स्लाइड्स तयार झाल्या नाहीत. कृपया पुन्हा प्रयत्न करा.',
-        );
+        throw const LessonGenerationException('scene generation: slides empty');
       }
       aiChapterLog('ui_state_update', {
         'title': lesson.topicName,
@@ -165,7 +169,7 @@ class _AiTeacherClassroomScreenState extends State<AiTeacherClassroomScreen> {
         'tricks': lesson.premium.memoryTricks.isNotEmpty,
       });
 
-      setState(() => _stageMessage = 'Generating AI Teacher voice...');
+      setState(() => _stageMessage = 'Generating AI Video...');
       LessonAudioBundle? audio;
       try {
         audio = await _narrate(lesson, topic);
@@ -177,123 +181,198 @@ class _AiTeacherClassroomScreenState extends State<AiTeacherClassroomScreen> {
           _audio = null;
           _audioFailed = true;
           _busy = false;
-          _error = kAudioUnavailable;
+          _error = classroomPipelineError(e, stage: 'tts');
         });
         return;
       }
 
-      setState(() => _stageMessage = 'Uploading audio...');
-      String audioPath = '';
-      String? videoUrl;
-      final uid = authService.currentUser?.uid;
-      if (uid != null && audio.bytes.isNotEmpty) {
-        final lessonId = aiLessonRepository.docIdFor(uid: uid, topic: topic);
-        try {
-          audioPath = await aiLessonAssetService.uploadAudio(
-            lessonId: lessonId,
-            bytes: audio.bytes,
-            contentType: audio.mimeType.contains('wav')
-                ? 'audio/wav'
-                : 'audio/mpeg',
-            ext: audio.mimeType.contains('wav') ? 'wav' : 'mp3',
-          );
-          await aiLessonRepository.doc(lessonId).set({
-            'audioUrl': audioPath,
-            'status': 'generating',
-            'stage': 'generating_voice',
-            'lesson': lesson.toMap(),
-            'script': lesson.script,
-          }, SetOptions(merge: true));
-        } catch (e) {
-          aiChapterLog('ui_audio_upload_error', {'error': '$e'});
-          if (!mounted) return;
-          setState(() {
-            _lesson = lesson;
-            _audio = audio;
-            _audioFailed = false;
-            _busy = false;
-          });
-          unawaited(_track(topic));
-          return;
-        }
-
-        setState(() => _stageMessage = 'Creating video...');
-        try {
-          if (await classroomVideoClient.isEngineRunning()) {
-            await classroomVideoClient.startRender(
-              jobId: lessonId,
-              topic: topic,
-              narration: audio.script,
-              slides: classroomVideoClient.slidesPayload(lesson, audio: audio),
-              audioPath: audioPath,
-            );
-            setState(() => _stageMessage = 'Finalizing video...');
-            final job = await classroomVideoClient.waitUntilPlayable(lessonId);
-            final stored = job.finalVideoUrl.trim().isNotEmpty
-                ? job.finalVideoUrl
-                : job.videoUrl;
-            if (stored.isNotEmpty) {
-              videoUrl = stored.contains('://')
-                  ? stored
-                  : await classroomVideoClient.playbackUrl(stored);
-            }
-          }
-        } catch (e) {
-          aiChapterLog('ui_video_render_error', {'error': '$e'});
-        }
-      }
-
-      if (!mounted) return;
+      if (!mounted || generateSeq != _generateSeq) return;
       if (audio.bytes.isEmpty) {
         setState(() {
           _lesson = lesson;
           _audio = null;
           _audioFailed = true;
           _busy = false;
-          _error = kAudioUnavailable;
+          _error = classroomPipelineError(
+            'Gemini TTS returned empty audio',
+            stage: 'tts',
+          );
         });
         return;
       }
       setState(() {
         _lesson = lesson;
         _audio = audio;
-        _videoPlaybackUrl = videoUrl;
+        _videoPlaybackUrl = null;
         _audioFailed = false;
         _busy = false;
-        _stageMessage = 'Ready to play';
+        _stageMessage = 'Video Ready';
         _error = null;
       });
       unawaited(_track(topic));
+      unawaited(
+        _prepareMuxedVideo(
+          lesson: lesson,
+          audio: audio,
+          topic: topic,
+          generateSeq: generateSeq,
+        ),
+      );
     } on LessonGenerationException catch (e) {
       aiChapterLog('ui_generate_error', {'error': e.message});
       if (!mounted) return;
       setState(() {
         _busy = false;
-        _error = studentFacingError(e);
+        _error = classroomPipelineError(e);
       });
     } catch (e) {
       aiChapterLog('ui_generate_error', {'error': '$e'});
       if (!mounted) return;
       setState(() {
         _busy = false;
-        _error = studentFacingError(e);
+        _error = classroomPipelineError(e);
       });
     }
   }
 
-  Future<LessonAudioBundle> _narrate(GeneratedLesson lesson, String topic) async {
+  Future<void> _prepareMuxedVideo({
+    required GeneratedLesson lesson,
+    required LessonAudioBundle audio,
+    required String topic,
+    required int generateSeq,
+  }) async {
+    final uid = authService.currentUser?.uid;
+    if (uid == null || uid.isEmpty || audio.bytes.isEmpty) return;
+
+    var canRender = false;
+    final probes =
+        shouldWaitForLocalAiWorker(
+          debug: kDebugMode,
+          isWeb: kIsWeb,
+          pageHost: kIsWeb ? Uri.base.host : '',
+        )
+        ? kLocalAiWorkerHealthAttempts
+        : 1;
+    for (var i = 0; i < probes; i++) {
+      canRender = await classroomVideoClient.isEngineRunning();
+      if (canRender) break;
+      if (i + 1 < probes) {
+        await Future<void>.delayed(kLocalAiWorkerHealthRetryDelay);
+      }
+    }
+    if (!shouldPrepareMuxedLecture(
+      engineCanRender: canRender,
+      signedIn: true,
+      hasAudio: true,
+    )) {
+      return;
+    }
+
+    final lessonId = aiLessonRepository.docIdFor(uid: uid, topic: topic);
+    try {
+      final audioPath = await aiLessonAssetService.uploadAudio(
+        lessonId: lessonId,
+        bytes: audio.bytes,
+        contentType: audio.mimeType.contains('wav')
+            ? 'audio/wav'
+            : 'audio/mpeg',
+        ext: audio.mimeType.contains('wav') ? 'wav' : 'mp3',
+      );
+      await aiLessonRepository.doc(lessonId).set({
+        'uid': uid,
+        'topic': topic,
+        'audioUrl': audioPath,
+        'status': 'generating',
+        'stage': 'generating_voice',
+        'lesson': lesson.toMap(),
+        'script': lesson.script,
+      }, SetOptions(merge: true));
+      await classroomVideoClient.startRender(
+        jobId: lessonId,
+        topic: topic,
+        narration: audio.script,
+        slides: classroomVideoClient.slidesPayload(lesson, audio: audio),
+        audioPath: audioPath,
+      );
+      final job = await classroomVideoClient.waitUntilPlayable(lessonId);
+      final stored = job.finalVideoUrl.trim().isNotEmpty
+          ? job.finalVideoUrl
+          : job.videoUrl;
+      if (stored.isEmpty) return;
+      final videoUrl = stored.contains('://')
+          ? stored
+          : await classroomVideoClient.playbackUrl(stored);
+      if (!mounted || generateSeq != _generateSeq) return;
+      setState(() {
+        _videoPlaybackUrl = lectureMuxedUrlForStudent(
+          isWeb: kIsWeb,
+          muxedUrl: videoUrl,
+        );
+      });
+    } catch (e) {
+      aiChapterLog('ui_video_render_error', {'error': '$e'});
+    }
+  }
+
+  Future<LessonAudioBundle> _narrate(
+    GeneratedLesson lesson,
+    String topic,
+  ) async {
     final audio = await aiLearningEngine.narrate(
       lesson: lesson,
       topic: topic,
       subject: _teacher,
     );
     if (audio.bytes.isEmpty) {
-      throw const ElevenLabsTtsException(
-        'ElevenLabs returned empty audio',
+      throw const AiTtsException(
+        'Gemini TTS returned empty audio',
         statusCode: 502,
       );
     }
     return audio;
+  }
+
+  /// Retries only the failed voice stage. The generated lesson stays visible
+  /// and is not charged/regenerated again because of a transient TTS failure.
+  Future<void> _retryNarration() async {
+    final lesson = _lesson;
+    final topic = _topicCtrl.text.trim();
+    if (_busy || lesson == null || topic.isEmpty) return;
+    final generateSeq = ++_generateSeq;
+    setState(() {
+      _busy = true;
+      _audio = null;
+      _audioFailed = false;
+      _videoPlaybackUrl = null;
+      _stageMessage = 'Retrying AI Teacher voice...';
+      _error = null;
+    });
+    try {
+      final audio = await _narrate(lesson, topic);
+      if (!mounted || generateSeq != _generateSeq) return;
+      setState(() {
+        _audio = audio;
+        _audioFailed = false;
+        _busy = false;
+        _stageMessage = 'Video Ready';
+      });
+      unawaited(
+        _prepareMuxedVideo(
+          lesson: lesson,
+          audio: audio,
+          topic: topic,
+          generateSeq: generateSeq,
+        ),
+      );
+    } catch (e) {
+      aiChapterLog('ui_tts_retry_error', {'error': '$e'});
+      if (!mounted || generateSeq != _generateSeq) return;
+      setState(() {
+        _audioFailed = true;
+        _busy = false;
+        _error = classroomPipelineError(e, stage: 'tts');
+      });
+    }
   }
 
   Future<void> _track(String topic) async {
@@ -316,6 +395,7 @@ class _AiTeacherClassroomScreenState extends State<AiTeacherClassroomScreen> {
   }
 
   Future<void> _newLessonPrompt() async {
+    _generateSeq++;
     setState(() {
       _lesson = null;
       _audio = null;
@@ -346,7 +426,9 @@ class _AiTeacherClassroomScreenState extends State<AiTeacherClassroomScreen> {
                   ),
                 if (lesson != null)
                   TextButton(
-                    onPressed: _busy ? null : () => unawaited(_generate(forceNew: true)),
+                    onPressed: _busy
+                        ? null
+                        : () => unawaited(_generate(forceNew: true)),
                     child: const Text('Generate New Lesson'),
                   ),
               ],
@@ -358,13 +440,14 @@ class _AiTeacherClassroomScreenState extends State<AiTeacherClassroomScreen> {
               initialTab: widget.initialTab,
               audioFailed: _audioFailed,
               videoPlaybackUrl: _videoPlaybackUrl,
+              audioRetrying: _busy,
+              onRetryAudio: _audioFailed && !_busy
+                  ? () => unawaited(_retryNarration())
+                  : null,
             )
           : (_busy
-              ? DhadaProgress(
-                  topic: _topicCtrl.text,
-                  message: _stageMessage,
-                )
-              : _buildPrompt()),
+                ? DhadaProgress(topic: _topicCtrl.text, message: _stageMessage)
+                : _buildPrompt()),
     );
   }
 
@@ -448,7 +531,10 @@ class _AiTeacherClassroomScreenState extends State<AiTeacherClassroomScreen> {
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(16),
-                  borderSide: const BorderSide(color: AppColors.sky, width: 1.6),
+                  borderSide: const BorderSide(
+                    color: AppColors.sky,
+                    width: 1.6,
+                  ),
                 ),
               ),
             ),
@@ -481,6 +567,11 @@ class _AiTeacherClassroomScreenState extends State<AiTeacherClassroomScreen> {
                   fontWeight: FontWeight.w700,
                   height: 1.4,
                 ),
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton(
+                onPressed: () => unawaited(_generate()),
+                child: const Text('Retry'),
               ),
             ],
           ],

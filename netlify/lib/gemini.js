@@ -111,7 +111,7 @@ Return ONLY one JSON object with keys:
 title, subject, subjectName, topic, introduction, concepts[], important_facts[],
 mpsc_points[], examples[], exam_traps[], teaching_script, mcq_seed_topics[],
 memoryTricks[], revision[], notes[], mcqs[], pyqs[], slides[].
-Keep JSON complete: 5 slides, 6 MCQs, 4 PYQ-style questions.`,
+Keep JSON complete: 5 slides, 6 MCQs, pyqs must be an empty array (never invent PYQs).`,
   };
 }
 
@@ -179,6 +179,153 @@ function stripFences(text) {
   return t.trim();
 }
 
+function cleanExtractedPages(parsed) {
+  const pages = Array.isArray(parsed.pages)
+    ? parsed.pages
+    : parsed.text
+      ? [{ text: parsed.text }]
+      : [];
+  return pages
+    .map((p) => {
+      const pageText = `${p.text || ''}`.trim();
+      const page =
+        typeof p.page === 'number' && p.page >= 1 ? p.page : undefined;
+      if (!pageText) return null;
+      return page ? { page, text: pageText } : { text: pageText };
+    })
+    .filter(Boolean);
+}
+
+async function geminiJsonFromUserParts({
+  systemPrompt,
+  userParts,
+  temperature = 0.1,
+}) {
+  const apiKey = requireEnv('AI_API_KEY');
+  const preferred = (process.env.AI_MODEL || '').trim();
+  const models = [];
+  if (preferred) models.push(preferred);
+  for (const m of FALLBACK_MODELS) {
+    if (!models.includes(m)) models.push(m);
+  }
+  let lastError = 'PDF extraction failed';
+  for (const model of models) {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey,
+        },
+        body: JSON.stringify({
+          systemInstruction: {
+            parts: [{ text: systemPrompt }],
+          },
+          contents: [{ role: 'user', parts: userParts }],
+          generationConfig: {
+            responseMimeType: 'application/json',
+            temperature,
+            maxOutputTokens: 8192,
+          },
+        }),
+      },
+    );
+    const raw = await res.text();
+    if (res.status !== 200) {
+      lastError = classifyGeminiHttp(res.status, raw);
+      if (res.status === 401 || res.status === 403) {
+        throw Object.assign(new Error(lastError), { publicMessage: lastError });
+      }
+      continue;
+    }
+    let payload;
+    try {
+      payload = JSON.parse(raw);
+    } catch (_) {
+      lastError = 'response parsing error';
+      continue;
+    }
+    const text = extractText(payload);
+    if (!text) {
+      lastError = 'response parsing error';
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(stripFences(text));
+      const cleaned = cleanExtractedPages(parsed);
+      if (!cleaned.length) {
+        lastError = 'empty document';
+        continue;
+      }
+      return { pages: cleaned };
+    } catch (_) {
+      lastError = 'response parsing error';
+    }
+  }
+  throw Object.assign(new Error(lastError), { publicMessage: lastError });
+}
+
+async function extractPdfFromPageImages({ pageImages = [], title = '' }) {
+  const images = (Array.isArray(pageImages) ? pageImages : [])
+    .map((p) => {
+      const data = `${p.data || ''}`.trim();
+      const page = typeof p.page === 'number' ? p.page : Number(p.page);
+      const mime = `${p.mimeType || p.mime_type || 'image/png'}`.trim();
+      if (!data || !(page >= 1)) return null;
+      return { page, data, mimeType: mime || 'image/png' };
+    })
+    .filter(Boolean);
+  if (!images.length) {
+    throw Object.assign(new Error('empty document'), {
+      publicMessage: 'empty document',
+    });
+  }
+  const pages = [];
+  for (const image of images) {
+    const result = await geminiJsonFromUserParts({
+      systemPrompt:
+        'You transcribe rendered PDF page images for RAG. JSON only. Never invent page numbers. Never invent text that is not visible.',
+      userParts: [
+        {
+          text: `Transcribe ALL visible text from this rendered PDF page image.
+This is OCR of PIXELS only. Ignore any broken/hidden PDF text layer.
+Marathi must be correct Unicode Devanagari (NFC). Do not emit isolated vowel signs such as ि at the start of a cluster; attach matras to the proper consonants. Do not copy Kruti/DevLys/CID encodings or ASCII mojibake.
+Preserve English, digits, punctuation, and mixed Marathi–English exactly. Do not translate. Do not invent headings or paragraphs.
+Return ONE JSON object only: {"pages":[{"page":${image.page},"text":"..."}]}.
+"page" MUST be the 1-based PDF page index ${image.page}.
+Title hint: ${title || '(none)'}`,
+        },
+        {
+          text: `PDF page ${image.page} (1-based). Transcribe this image.`,
+        },
+        {
+          inline_data: {
+            mime_type: image.mimeType,
+            data: image.data,
+          },
+        },
+      ],
+      temperature: 0.1,
+    });
+    const chunk = Array.isArray(result.pages) ? result.pages : [];
+    for (const p of chunk) {
+      const text = `${p.text || ''}`.trim();
+      if (!text) continue;
+      pages.push({
+        page: typeof p.page === 'number' && p.page >= 1 ? p.page : image.page,
+        text,
+      });
+    }
+  }
+  if (!pages.length) {
+    throw Object.assign(new Error('empty document'), {
+      publicMessage: 'empty document',
+    });
+  }
+  return { pages };
+}
+
 async function extractPdfFromUrl({ fileUrl, title = '' }) {
   const url = `${fileUrl || ''}`.trim();
   if (!url) {
@@ -211,106 +358,26 @@ async function extractPdfFromUrl({ fileUrl, title = '' }) {
       publicMessage: `PDF extraction failed: file is larger than ${MAX_PDF_BYTES / (1024 * 1024)} MB`,
     });
   }
-  const apiKey = requireEnv('AI_API_KEY');
-  const preferred = (process.env.AI_MODEL || '').trim();
-  const models = [];
-  if (preferred) models.push(preferred);
-  for (const m of FALLBACK_MODELS) {
-    if (!models.includes(m)) models.push(m);
-  }
   const prompt = `Extract ALL text from this MPSC study PDF.
 Return ONE JSON object only: {"pages":[{"page":1,"text":"..."}]}.
 "page" MUST be the 1-based index of the actual PDF file page you extracted.
 If you cannot observe real page boundaries, return {"pages":[{"text":"<full text>"}]} with NO page field — never guess a page number.
 Preserve Marathi (Devanagari) exactly. Do not translate. Do not invent facts.
 Title hint: ${title || '(none)'}`;
-
-  let lastError = 'PDF extraction failed';
-  for (const model of models) {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+  return geminiJsonFromUserParts({
+    systemPrompt:
+      'You extract PDF text for RAG. JSON only. Never invent page numbers.',
+    userParts: [
+      { text: prompt },
       {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': apiKey,
+        inline_data: {
+          mime_type: 'application/pdf',
+          data: buf.toString('base64'),
         },
-        body: JSON.stringify({
-          systemInstruction: {
-            parts: [
-              {
-                text: 'You extract PDF text for RAG. JSON only. Never invent page numbers.',
-              },
-            ],
-          },
-          contents: [
-            {
-              role: 'user',
-              parts: [
-                { text: prompt },
-                {
-                  inline_data: {
-                    mime_type: 'application/pdf',
-                    data: buf.toString('base64'),
-                  },
-                },
-              ],
-            },
-          ],
-          generationConfig: {
-            responseMimeType: 'application/json',
-            temperature: 0.1,
-            maxOutputTokens: 8192,
-          },
-        }),
       },
-    );
-    const raw = await res.text();
-    if (res.status !== 200) {
-      lastError = classifyGeminiHttp(res.status, raw);
-      if (res.status === 401 || res.status === 403) {
-        throw Object.assign(new Error(lastError), { publicMessage: lastError });
-      }
-      continue;
-    }
-    let payload;
-    try {
-      payload = JSON.parse(raw);
-    } catch (_) {
-      lastError = 'response parsing error';
-      continue;
-    }
-    const text = extractText(payload);
-    if (!text) {
-      lastError = 'response parsing error';
-      continue;
-    }
-    try {
-      const parsed = JSON.parse(stripFences(text));
-      const pages = Array.isArray(parsed.pages)
-        ? parsed.pages
-        : parsed.text
-          ? [{ text: parsed.text }]
-          : [];
-      const cleaned = pages
-        .map((p) => {
-          const pageText = `${p.text || ''}`.trim();
-          const page =
-            typeof p.page === 'number' && p.page >= 1 ? p.page : undefined;
-          if (!pageText) return null;
-          return page ? { page, text: pageText } : { text: pageText };
-        })
-        .filter(Boolean);
-      if (!cleaned.length) {
-        lastError = 'empty document';
-        continue;
-      }
-      return { pages: cleaned };
-    } catch (_) {
-      lastError = 'response parsing error';
-    }
-  }
-  throw Object.assign(new Error(lastError), { publicMessage: lastError });
+    ],
+    temperature: 0.1,
+  });
 }
 
 function learnSystemPrompt(mode, teachingStyle) {
@@ -325,6 +392,7 @@ HARD RULES:
 - If the student question uses Devanagari, answer in natural Marathi. Otherwise English.
 - Explain step-by-step with MPSC exam-oriented examples drawn from the chunks.
 - If the student asks to compare topics, use a Markdown table from chunk facts only.
+- For summary mode, cover Exam Focus, Core Concept, Important Facts, comparison/differences when evidence exists, Confusing points/traps, PYQ connection only if present in chunks, and a 2-minute revision. Never invent PYQs.
 - Memory tricks must not change the meaning of source facts.
 - MCQ difficulty must be exactly Easy, Medium, or Hard.
 - chunkIndexes must be integers from the provided chunk list only.
@@ -398,6 +466,7 @@ module.exports = {
   compactLessonPrompt,
   embedTexts,
   extractPdfFromUrl,
+  extractPdfFromPageImages,
   learnGrounded,
   learnSystemPrompt,
   learnUserText,

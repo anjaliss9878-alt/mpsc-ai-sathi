@@ -4,16 +4,16 @@ import 'package:flutter/foundation.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/faculty_narration.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/full_lesson_narration.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/generated_lesson.dart';
+import 'package:mpsc_combine_ai/services/ai_teacher_system/lecture_lesson_sanitizer.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/subtitle_timing.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/teaching_sequence.dart';
 import 'package:mpsc_combine_ai/services/lesson_audio_player.dart';
+import 'package:mpsc_combine_ai/services/voice_button_gate.dart';
+import 'package:mpsc_combine_ai/utils/student_copy.dart';
 
 /// Result of an interactive scene MCQ (wait → answer → explain).
 class SceneMcqResult {
-  const SceneMcqResult({
-    required this.selectedIndex,
-    required this.mcq,
-  });
+  const SceneMcqResult({required this.selectedIndex, required this.mcq});
 
   final int selectedIndex;
   final GeneratedMcq mcq;
@@ -35,7 +35,7 @@ class ClassroomMemoryGuard {
 ///
 /// Pipeline: **Lesson → Scene → Animation → Voice → Interaction**
 ///
-/// Plays one continuous ElevenLabs Marathi lecture file and syncs slides
+/// Plays one continuous Gemini TTS Marathi lecture file and syncs slides
 /// to character/beat timestamps. Never synthesizes sentence-by-sentence TTS.
 class VideoClassroomEngine extends ChangeNotifier {
   VideoClassroomEngine({
@@ -59,6 +59,7 @@ class VideoClassroomEngine extends ChangeNotifier {
   }
 
   final LessonAudioPlayer _audio;
+  final VoiceButtonGate _voiceGate = VoiceButtonGate();
 
   /// Show one MCQ after a scene; wait until the student answers.
   /// Return null if the sheet is dismissed without an answer.
@@ -68,12 +69,8 @@ class VideoClassroomEngine extends ChangeNotifier {
   Future<void> Function()? onOfferFullQuiz;
 
   /// Persist progress (fire-and-forget from the engine's perspective).
-  void Function(
-    int sceneIndex, {
-    bool completed,
-    int quizScore,
-    int quizTotal,
-  })? onProgressCheckpoint;
+  void Function(int sceneIndex, {bool completed, int quizScore, int quizTotal})?
+  onProgressCheckpoint;
 
   VoidCallback? onScrollToPremium;
 
@@ -111,8 +108,7 @@ class VideoClassroomEngine extends ChangeNotifier {
   GeneratedLesson get lesson => _lesson;
   List<TeachingBeat> get beats => _ensureBeats();
   int get slideIndex => _slideIndex;
-  int get beatIndex =>
-      _lessonAudio != null ? _spanIndex : _beatIndex;
+  int get beatIndex => _lessonAudio != null ? _spanIndex : _beatIndex;
   int get segmentIndex => beatIndex;
   int get revealCount => _revealCount;
   int? get activeBulletIndex => _activeBulletIndex;
@@ -154,16 +150,22 @@ class VideoClassroomEngine extends ChangeNotifier {
     if (_lesson.slides.isEmpty) {
       return buildSubtitleTimingFromText(spoken);
     }
-    final slide = _lesson.slides[_slideIndex.clamp(0, _lesson.slides.length - 1)];
+    final slide =
+        _lesson.slides[_slideIndex.clamp(0, _lesson.slides.length - 1)];
     return slide.resolvedSubtitleTiming(spoken);
   }
 
   double get progress {
     final audio = _lessonAudio;
     if (audio != null) {
-      final total = _audio.duration > Duration.zero ? _audio.duration : audio.duration;
+      final total = _audio.duration > Duration.zero
+          ? _audio.duration
+          : audio.duration;
       if (total <= Duration.zero) return 0;
-      return (_audio.position.inMilliseconds / total.inMilliseconds).clamp(0.0, 1.0);
+      return (_audio.position.inMilliseconds / total.inMilliseconds).clamp(
+        0.0,
+        1.0,
+      );
     }
     final b = beats;
     if (b.isEmpty) return 0;
@@ -184,7 +186,7 @@ class VideoClassroomEngine extends ChangeNotifier {
   }) {
     ClassroomMemoryGuard.trimLessonCaches();
     _lessonAudio = null;
-    _lesson = lesson;
+    _lesson = ensureClassroomVideoScenes(lesson);
     _beatsForLesson = null;
     _ensureBeats();
     _beatIndex = startBeat.clamp(0, beats.isEmpty ? 0 : beats.length - 1);
@@ -214,6 +216,9 @@ class VideoClassroomEngine extends ChangeNotifier {
       mimeType: next.mimeType,
     );
     if (_disposed) return;
+    if (!_audio.hasContinuousSource) {
+      throw StateError('AI Teacher audio could not be loaded for playback');
+    }
     if (actual > Duration.zero) next = next.withDuration(actual);
     _lessonAudio = next;
     _spanIndex = 0;
@@ -240,6 +245,8 @@ class VideoClassroomEngine extends ChangeNotifier {
       if (_spanIndex >= spans.length) _spanIndex = 0;
       _audio.releasePauseGate();
       _isPaused = false;
+      debugPrint('[TTS] buttonPressed=true');
+      _audio.unlockWebPlayback();
       _startContinuous(from: _spanStart(_spanIndex));
       return;
     }
@@ -247,8 +254,7 @@ class VideoClassroomEngine extends ChangeNotifier {
     if (b.isEmpty) return;
     _isPlaying = false;
     _isPaused = false;
-    _caption =
-        'एकात्मिक मराठी आवाज तयार झाला नाही. कृपया पुन्हा Generate AI Lesson दाबा.';
+    _caption = kVoiceFailed;
     notifyListeners();
   }
 
@@ -258,6 +264,7 @@ class VideoClassroomEngine extends ChangeNotifier {
     _isPlaying = false;
     _isPaused = true;
     _zoomPulse = false;
+    _voiceGate.release();
     notifyListeners();
   }
 
@@ -306,11 +313,18 @@ class VideoClassroomEngine extends ChangeNotifier {
   }
 
   void togglePlayPause() {
+    debugPrint('[TTS] buttonPressed=true');
     if (_isPlaying) {
       pause();
-    } else {
-      resume();
+      return;
     }
+    if (_isPaused) {
+      _audio.unlockWebPlayback();
+      resume();
+      return;
+    }
+    if (!_voiceGate.tryAcquire()) return;
+    play();
   }
 
   void next() {
@@ -426,11 +440,15 @@ class VideoClassroomEngine extends ChangeNotifier {
     final f = fraction.clamp(0.0, 1.0);
     final audio = _lessonAudio;
     if (audio != null) {
-      final total = _audio.duration > Duration.zero ? _audio.duration : audio.duration;
+      final total = _audio.duration > Duration.zero
+          ? _audio.duration
+          : audio.duration;
       if (total > Duration.zero) {
-        unawaited(_audio.seekTo(
-          Duration(milliseconds: (f * total.inMilliseconds).round()),
-        ));
+        unawaited(
+          _audio.seekTo(
+            Duration(milliseconds: (f * total.inMilliseconds).round()),
+          ),
+        );
       }
       return;
     }
@@ -509,7 +527,7 @@ class VideoClassroomEngine extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Caption-only echo — classroom voice is the continuous ElevenLabs file.
+  /// Caption-only echo — classroom voice is the continuous Gemini TTS file.
   Future<void> speakOnce(String text) async {
     if (_disposed) return;
     final spoken = facultyNarration(text);
@@ -567,15 +585,32 @@ class VideoClassroomEngine extends ChangeNotifier {
   Future<void> _runContinuous(int sessionId, {required Duration from}) async {
     ContinuousPlayResult result = ContinuousPlayResult.cancelled;
     try {
-      await _audio.setSpeed(_playbackSpeed);
-      await _audio.setMuted(_muted);
+      if (!kIsWeb) {
+        await _audio.setSpeed(_playbackSpeed);
+        await _audio.setMuted(_muted);
+      }
       if (sessionId != _playSessionId || _disposed || _isPaused) return;
       result = await _audio.playContinuous(from: from);
     } catch (e) {
-      debugPrint('VideoClassroomEngine continuous play: $e');
+      debugPrint('[TTS] playbackStarted=false');
+      debugPrint('[TTS] error=${e.runtimeType}');
+      if (sessionId == _playSessionId && !_disposed) {
+        _isPlaying = false;
+        _isPaused = false;
+        _caption = kVoiceFailed;
+        notifyListeners();
+      }
       return;
+    } finally {
+      _voiceGate.release();
     }
     if (sessionId != _playSessionId || _disposed || _isPaused) return;
+    if (result == ContinuousPlayResult.error && !_disposed) {
+      _isPlaying = false;
+      _caption = kVoiceFailed;
+      notifyListeners();
+      return;
+    }
     if (result != ContinuousPlayResult.completed) return;
     await _finishLesson();
   }
@@ -589,13 +624,15 @@ class VideoClassroomEngine extends ChangeNotifier {
     if (bundle == null || bundle.spans.isEmpty) return;
     final i = spanIndex.clamp(0, bundle.spans.length - 1);
     final span = bundle.spans[i];
-    _spanIndex = i;
-    _slideIndex = slideIndexForAudioSpan(
+    final nextSlide = slideIndexForAudioSpan(
       spanSlideIndex: span.slideIndex,
       spanIndex: i,
       spanCount: bundle.spans.length,
       slideCount: _lesson.slides.length,
     );
+    _spanIndex = i;
+    _conceptTransition = nextSlide != _slideIndex;
+    _slideIndex = nextSlide;
     _caption = span.text;
     _beatKind = null;
     _activeBulletIndex = null;
@@ -614,20 +651,13 @@ class VideoClassroomEngine extends ChangeNotifier {
   void _syncContinuousFromProgress(double fileProgress) {
     final bundle = _lessonAudio;
     if (bundle == null || bundle.spans.isEmpty) return;
-    final total = _audio.duration > Duration.zero ? _audio.duration : bundle.duration;
+    final total = _audio.duration > Duration.zero
+        ? _audio.duration
+        : bundle.duration;
     final pos = total <= Duration.zero
         ? Duration.zero
-        : Duration(
-            milliseconds: (fileProgress * total.inMilliseconds).round(),
-          );
-    var idx = 0;
-    for (var i = 0; i < bundle.spans.length; i++) {
-      final span = bundle.spans[i];
-      if (pos < span.end || i == bundle.spans.length - 1) {
-        idx = i;
-        break;
-      }
-    }
+        : Duration(milliseconds: (fileProgress * total.inMilliseconds).round());
+    var idx = spanIndexAtPosition(spans: bundle.spans, position: pos);
     final span = bundle.spans[idx];
     final spanMs = (span.end - span.start).inMilliseconds;
     final local = spanMs <= 0
@@ -640,8 +670,10 @@ class VideoClassroomEngine extends ChangeNotifier {
     final slide = currentSlide;
     if (slide != null && slide.animationSteps > 1) {
       final target = slide.animationSteps;
-      _revealCount = (1 + (local.clamp(0.0, 0.999) * target).floor())
-          .clamp(1, target);
+      _revealCount = (1 + (local.clamp(0.0, 0.999) * target).floor()).clamp(
+        1,
+        target,
+      );
     }
     _syncPointerFromSpeech();
     _syncActiveKeywordFromSpeech();
@@ -659,8 +691,8 @@ class VideoClassroomEngine extends ChangeNotifier {
     _caption = _lesson.premium.quickRevision.trim().isNotEmpty
         ? _lesson.premium.quickRevision
         : (_lesson.summary.trim().isNotEmpty
-            ? _lesson.summary
-            : 'Lesson complete! Check PYQ, Quiz and Notes below.');
+              ? _lesson.summary
+              : 'Lesson complete! Check PYQ, Quiz and Notes below.');
     _zoomPulse = false;
     notifyListeners();
     onProgressCheckpoint?.call(
@@ -680,8 +712,10 @@ class VideoClassroomEngine extends ChangeNotifier {
       return;
     }
     final n = slide.pointerPath.length;
-    _pointerStep =
-        (_speechProgress.clamp(0.0, 0.999) * n).floor().clamp(0, n - 1);
+    _pointerStep = (_speechProgress.clamp(0.0, 0.999) * n).floor().clamp(
+      0,
+      n - 1,
+    );
   }
 
   void _syncActiveKeywordFromSpeech() {
@@ -702,10 +736,7 @@ class VideoClassroomEngine extends ChangeNotifier {
     final idx = (_speechProgress.clamp(0.0, 0.999) * words.length)
         .floor()
         .clamp(0, words.length - 1);
-    final window = words
-        .sublist(0, idx + 1)
-        .join(' ')
-        .toLowerCase();
+    final window = words.sublist(0, idx + 1).join(' ').toLowerCase();
     for (final k in keys) {
       final t = k.trim().toLowerCase();
       if (t.isEmpty) continue;
@@ -715,10 +746,11 @@ class VideoClassroomEngine extends ChangeNotifier {
       }
     }
     // Fallback: rotate keywords with speech progress.
-    _activeKeyword = keys[
-        (_speechProgress.clamp(0.0, 0.999) * keys.length)
-            .floor()
-            .clamp(0, keys.length - 1)];
+    _activeKeyword =
+        keys[(_speechProgress.clamp(0.0, 0.999) * keys.length).floor().clamp(
+          0,
+          keys.length - 1,
+        )];
   }
 
   /// Synthesize a quick check MCQ when Gemini omitted [GeneratedSlide.sectionQuestion].
@@ -735,12 +767,7 @@ class VideoClassroomEngine extends ChangeNotifier {
     if (marathi) {
       return GeneratedMcq(
         question: '${slide.title} — मुख्य मुद्दा कोणता?',
-        options: [
-          key,
-          'वरीलपैकी नाही',
-          'संपूर्णपणे चुकीचे',
-          'केवळ उदाहरण',
-        ],
+        options: [key, 'वरीलपैकी नाही', 'संपूर्णपणे चुकीचे', 'केवळ उदाहरण'],
         correctIndex: 0,
         explanation: slide.explanation.trim().isNotEmpty
             ? slide.explanation

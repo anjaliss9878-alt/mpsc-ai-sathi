@@ -1,6 +1,11 @@
 const crypto = require('crypto');
-const { learnGrounded, learnSystemPrompt, learnUserText, EMBED_DIMENSIONS } =
-  require('./gemini');
+const {
+  learnGrounded,
+  learnSystemPrompt,
+  learnUserText,
+  embedTexts,
+  EMBED_DIMENSIONS,
+} = require('./gemini');
 
 const VERTEX_EMBED_MODEL = 'gemini-embedding-001';
 const VERTEX_GENERATE_MODELS = [
@@ -298,6 +303,35 @@ async function learnGroundedVertex({
   return { ...parsed, provider: 'vertex' };
 }
 
+/// Student `/rag/embed`: Vertex first when configured, Gemini Developer API fallback.
+async function embedTextsPreferVertex({ texts, task = 'document' }) {
+  if (isVertexConfigured()) {
+    try {
+      const embeddings = await embedTextsVertex({ texts, task });
+      return { embeddings, provider: 'vertex' };
+    } catch (_) {
+      // Same gemini-embedding-001 @ 768-d via Gemini Developer API.
+    }
+  }
+  const embeddings = await embedTexts({ texts, task });
+  return { embeddings, provider: 'gemini' };
+}
+
+/// Student `/rag/learn`: Vertex first when configured, Gemini fallback.
+async function learnGroundedPreferVertex(args) {
+  if (!Array.isArray(args.chunks) || args.chunks.length === 0) {
+    return { insufficient: true, answer: '' };
+  }
+  if (isVertexConfigured()) {
+    try {
+      return await learnGroundedVertex(args);
+    } catch (_) {
+      // Existing Gemini /rag/learn path.
+    }
+  }
+  return learnGrounded(args);
+}
+
 module.exports = {
   isVertexConfigured,
   vertexProject,
@@ -306,7 +340,9 @@ module.exports = {
   vertexModelUrl,
   parseEmbeddingValues,
   embedTextsVertex,
+  embedTextsPreferVertex,
   learnGroundedVertex,
+  learnGroundedPreferVertex,
   vertexUnavailable,
   learnGrounded,
   mintAccessToken,

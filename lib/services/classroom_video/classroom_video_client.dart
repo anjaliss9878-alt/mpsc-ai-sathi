@@ -3,7 +3,9 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 import 'package:mpsc_combine_ai/models/ai_lesson.dart';
+import 'package:flutter/foundation.dart';
 import 'package:mpsc_combine_ai/services/ai_backend_base.dart';
+import 'package:mpsc_combine_ai/services/backend_request_headers.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/ai_lesson_asset_service.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/ai_lesson_repository.dart';
 import 'package:mpsc_combine_ai/services/ai_teacher_system/full_lesson_narration.dart';
@@ -28,12 +30,17 @@ class ClassroomVideoClient {
   final String _workerBase;
 
   Future<bool> isEngineRunning() async {
+    final uri = Uri.parse('$_workerBase/health');
     try {
-      final res = await _http
-          .get(Uri.parse('$_workerBase/health'))
-          .timeout(const Duration(seconds: 2));
-      return classroomEngineHealthOk(res.statusCode, res.body);
-    } catch (_) {
+      final res = await _http.get(uri).timeout(const Duration(seconds: 2));
+      final ok = classroomEngineHealthOk(res.statusCode, res.body);
+      debugPrint(
+        '[ai-video] health endpoint=$uri status=${res.statusCode} '
+        'canRender=$ok token=n/a',
+      );
+      return ok;
+    } catch (e) {
+      debugPrint('[ai-video] health endpoint=$uri error=${e.runtimeType}');
       return false;
     }
   }
@@ -71,10 +78,15 @@ class ClassroomVideoClient {
     if (token == null || token.isEmpty) {
       throw StateError('Please sign in first');
     }
+    final uri = Uri.parse(aiVideoRenderEndpoint(_workerBase));
+    final headers = await backendJsonHeaders();
+    debugPrint(
+      '[ai-video] render endpoint=$uri method=POST hasToken=true',
+    );
     final res = await _http
         .post(
-          Uri.parse('$_workerBase/render'),
-          headers: {'Content-Type': 'application/json'},
+          uri,
+          headers: headers,
           body: jsonEncode({
             'jobId': jobId,
             'idToken': token,
@@ -85,6 +97,10 @@ class ClassroomVideoClient {
           }),
         )
         .timeout(const Duration(seconds: 20));
+    debugPrint(
+      '[ai-video] render status=${res.statusCode} '
+      'bodyChars=${res.body.length}',
+    );
     if (res.statusCode != 202 && res.statusCode != 200) {
       throw StateError(
         'Video rendering failed (HTTP ${res.statusCode})',
@@ -111,7 +127,9 @@ class ClassroomVideoClient {
               : 'Video rendering failed',
         );
       }
-      if (job.hasAudio && job.hasVideo && (job.isReady || job.finalVideoUrl.trim().isNotEmpty)) {
+      // Require status=ready. A leftover finalVideoUrl from a previous job
+      // plus newly uploaded audio must not switch the lecture to a silent MP4.
+      if (job.isPlayable) {
         return job;
       }
       if (DateTime.now().isAfter(end)) break;
@@ -132,6 +150,25 @@ class ClassroomVideoClient {
       classroomSlidesPayload(lesson, audio: audio);
 }
 
+/// Play the muxed MP4 on native. Flutter web keeps the slide lecture engine
+/// so scene changes stay visible with Gemini TTS.
+String? lectureMuxedUrlForStudent({
+  required bool isWeb,
+  String? muxedUrl,
+}) {
+  if (isWeb) return null;
+  final u = (muxedUrl ?? '').trim();
+  return u.isEmpty ? null : u;
+}
+
+/// Mux whenever FFmpeg worker is up, the student is signed in, and TTS audio exists.
+bool shouldPrepareMuxedLecture({
+  required bool engineCanRender,
+  required bool signedIn,
+  required bool hasAudio,
+}) =>
+    engineCanRender && signedIn && hasAudio;
+
 final ClassroomVideoClient classroomVideoClient = ClassroomVideoClient();
 
 bool classroomEngineHealthOk(int statusCode, String body) {
@@ -140,7 +177,7 @@ bool classroomEngineHealthOk(int statusCode, String body) {
     final map = jsonDecode(body);
     if (map is! Map) return false;
     if (map['canRender'] == false || map['ffmpeg'] == false) return false;
-    return map['ok'] == true || map['canRender'] == true;
+    return map['canRender'] == true || map['ffmpeg'] == true;
   } catch (_) {
     return false;
   }

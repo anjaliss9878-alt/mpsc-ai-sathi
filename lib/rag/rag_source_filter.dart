@@ -179,8 +179,14 @@ bool _topicMatches(String topicId, String chapterId, RagSourceFilter filter) {
     ...filter.topicIds.where((id) => id.trim().isNotEmpty),
   };
   if (wanted.isEmpty) return true;
-  return wanted.contains(topicId) ||
-      (topicId.isEmpty && wanted.contains(chapterId));
+  if (wanted.contains(topicId)) return true;
+  if (topicId.isNotEmpty) return false;
+  // Chapter-level PDF/notes have no topicId. Keep them when the selected
+  // topic is the chapter itself, or the source already matches the chapter.
+  if (wanted.contains(chapterId)) return true;
+  final wantedChapter = filter.chapterId.trim();
+  if (wantedChapter.isEmpty) return true;
+  return chapterId.isEmpty || chapterId == wantedChapter;
 }
 
 bool _languageMatches(String item, String wanted) {
@@ -231,6 +237,56 @@ bool matchesRagSourceMetadata(RagSource source, RagSourceFilter filter) {
   }
   if (!ragDomainIsAllowed(source.domain, filter.domains)) return false;
   return true;
+}
+
+/// Counts how many [chunks] survive each metadata gate. Used by tests and
+/// retrieve logs so empty results show the exact drop-off.
+Map<String, int> countRagChunkFilterStages(
+  Iterable<RagChunk> chunks,
+  RagSourceFilter filter,
+) {
+  var afterExam = 0;
+  var afterSubject = 0;
+  var afterChapter = 0;
+  var afterTopic = 0;
+  var afterPublished = 0;
+  var afterDomain = 0;
+  var afterAll = 0;
+  for (final chunk in chunks) {
+    if (filter.onlyPublishedReady && !chunk.published) continue;
+    afterPublished += 1;
+    final examOk = filter.examId.trim().isEmpty ||
+        chunk.examId.isEmpty ||
+        chunk.examId == filter.examId;
+    if (!examOk) continue;
+    afterExam += 1;
+    final subjectOk = filter.subjectId.trim().isEmpty ||
+        chunk.subjectId.isEmpty ||
+        chunk.subjectId == filter.subjectId;
+    if (!subjectOk) continue;
+    afterSubject += 1;
+    final chapterOk = filter.chapterId.trim().isEmpty ||
+        chunk.chapterId.isEmpty ||
+        chunk.chapterId == filter.chapterId ||
+        chunk.topicId == filter.chapterId;
+    if (!chapterOk) continue;
+    afterChapter += 1;
+    if (!_topicMatches(chunk.topicId, chunk.chapterId, filter)) continue;
+    afterTopic += 1;
+    if (!ragDomainIsAllowed(chunk.domain, filter.domains)) continue;
+    afterDomain += 1;
+    if (matchesRagChunkMetadata(chunk, filter)) afterAll += 1;
+  }
+  return {
+    'candidates': chunks.length,
+    'afterPublished': afterPublished,
+    'afterExam': afterExam,
+    'afterSubject': afterSubject,
+    'afterChapter': afterChapter,
+    'afterTopic': afterTopic,
+    'afterDomain': afterDomain,
+    'afterAllMetadata': afterAll,
+  };
 }
 
 /// Chunk-level Multi-RAG / content-index metadata filter.
