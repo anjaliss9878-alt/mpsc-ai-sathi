@@ -8,6 +8,7 @@ import 'package:mpsc_combine_ai/admin/widgets/admin_scaffold.dart';
 import 'package:mpsc_combine_ai/admin/widgets/admin_select_field.dart';
 import 'package:mpsc_combine_ai/admin/widgets/confirm_delete_dialog.dart';
 import 'package:mpsc_combine_ai/admin/widgets/line_list_field.dart';
+import 'package:mpsc_combine_ai/data/student_curriculum.dart';
 import 'package:mpsc_combine_ai/models/chapter_item.dart';
 import 'package:mpsc_combine_ai/models/content_index.dart';
 import 'package:mpsc_combine_ai/models/exam_item.dart';
@@ -804,9 +805,11 @@ class _AdminNoteFormScreenState extends State<AdminNoteFormScreen> {
         AdminSelectItem(id: e.id, label: e.title),
     ]);
     final subjectItems = uniqueAdminSelectItems([
-      for (final s in _subjects)
-        if (s.examId == _examId || s.examId.isEmpty)
-          AdminSelectItem(id: s.id, label: s.title),
+      // Admin CMS: every subject tagged for this exam (+ Group B stale-id
+      // recovery). Do not use [subjectsForExam] here — that collapses Group B
+      // Combined to the four student curriculum papers only.
+      for (final s in adminSubjectsForExam(_subjects, _examId))
+        AdminSelectItem(id: s.id, label: s.title),
     ]);
     final topicItems = _topics.isEmpty && _chapterId.isNotEmpty
         ? [

@@ -155,6 +155,34 @@ bool subjectBelongsToExam(SubjectItem subject, String examId) {
       (subject.examId.isEmpty || subject.examId == kDefaultExamId);
 }
 
+/// Admin CMS subject membership for an exam.
+///
+/// Includes every Firestore subject tagged with [examId], plus Group B
+/// canonical-id recovery when `examId` is stale/wrong. Unlike
+/// [subjectsForExam], this does **not** collapse Group B Combined to the
+/// four curriculum paper subjects only.
+bool adminSubjectBelongsToExam(SubjectItem subject, String examId) {
+  if (examId.isEmpty) return true;
+  if (subject.examId == examId) return true;
+  if (examId == kGroupBCombinedExamId && isGroupBCombinedSubjectId(subject.id)) {
+    return true;
+  }
+  if (examId == kDefaultExamId &&
+      !isGroupBCombinedSubjectId(subject.id) &&
+      (subject.examId.isEmpty || subject.examId == kDefaultExamId)) {
+    return true;
+  }
+  return false;
+}
+
+List<SubjectItem> adminSubjectsForExam(
+  List<SubjectItem> subjects,
+  String examId,
+) {
+  return subjects.where((s) => adminSubjectBelongsToExam(s, examId)).toList()
+    ..sort((a, b) => a.order.compareTo(b.order));
+}
+
 List<SubjectItem> subjectsForExam(List<SubjectItem> subjects, String examId) {
   final matched = subjects.where((s) => subjectBelongsToExam(s, examId)).toList()
     ..sort((a, b) => a.order.compareTo(b.order));

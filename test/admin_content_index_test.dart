@@ -1,6 +1,7 @@
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mpsc_combine_ai/admin/notes/admin_subjects_screen.dart';
+import 'package:mpsc_combine_ai/data/student_curriculum.dart';
 import 'package:mpsc_combine_ai/models/chapter_item.dart';
 import 'package:mpsc_combine_ai/models/content_index.dart';
 import 'package:mpsc_combine_ai/models/exam_item.dart';
@@ -308,6 +309,46 @@ void main() {
     expect(
       adminContentIndexShowsSubject(groupB, kDefaultExamId),
       isFalse,
+    );
+
+    // Regression: GS subject with stale/mismatched examId must still appear
+    // under Group B Combined (Admin stale-id recovery).
+    const gsStaleExamId = SubjectItem(
+      id: kGroupBSubjectMainsGsId,
+      title: 'General Studies / General Ability & Intelligence',
+      subtitle: 'Paper 2',
+      iconName: 'account_balance',
+      order: 3,
+      examId: kDefaultExamId,
+    );
+    expect(
+      adminContentIndexShowsSubject(gsStaleExamId, kGroupBCombinedExamId),
+      isTrue,
+    );
+    // Extra Firestore subject tagged for Group B must appear in Admin (not
+    // collapsed to the four student curriculum paper ids only).
+    const extraTagged = SubjectItem(
+      id: 'gb_extra_subject',
+      title: 'Extra Group B Subject',
+      subtitle: '',
+      iconName: 'menu_book',
+      order: 10,
+      examId: kGroupBCombinedExamId,
+    );
+    expect(
+      adminContentIndexShowsSubject(extraTagged, kGroupBCombinedExamId),
+      isTrue,
+    );
+    expect(
+      adminSubjectsForExam(
+        [groupB, legacy, gsStaleExamId, extraTagged],
+        kGroupBCombinedExamId,
+      ).map((s) => s.id),
+      [
+        kGroupBSubjectPrelimsGatId,
+        kGroupBSubjectMainsGsId,
+        'gb_extra_subject',
+      ],
     );
   });
 

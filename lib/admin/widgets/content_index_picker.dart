@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:mpsc_combine_ai/data/student_curriculum.dart';
 import 'package:mpsc_combine_ai/models/chapter_item.dart';
 import 'package:mpsc_combine_ai/models/content_index.dart';
 import 'package:mpsc_combine_ai/models/exam_item.dart';
@@ -151,9 +152,7 @@ class _ContentIndexPickerState extends State<ContentIndexPicker> {
   @override
   Widget build(BuildContext context) {
     final exams = _exams.isEmpty ? [ExamItem.mpscCombine()] : _exams;
-    final subjects = _subjects
-        .where((s) => s.examId == _value.examId || s.examId.isEmpty)
-        .toList();
+    final subjects = adminSubjectsForExam(_subjects, _value.examId);
     final topicItems = _topics.isEmpty && _value.chapterId.isNotEmpty
         ? [
             ChapterItem(

@@ -4,6 +4,7 @@ import 'package:mpsc_combine_ai/admin/notes/admin_subject_form_screen.dart';
 import 'package:mpsc_combine_ai/admin/widgets/admin_list_tile.dart';
 import 'package:mpsc_combine_ai/admin/widgets/admin_scaffold.dart';
 import 'package:mpsc_combine_ai/admin/widgets/confirm_delete_dialog.dart';
+import 'package:mpsc_combine_ai/data/student_curriculum.dart';
 import 'package:mpsc_combine_ai/models/exam_item.dart';
 import 'package:mpsc_combine_ai/models/subject_item.dart';
 import 'package:mpsc_combine_ai/services/audit_log_repository.dart';
@@ -15,13 +16,9 @@ import 'package:mpsc_combine_ai/widgets/async_state_widgets.dart';
 const String kAdminContentIndexDefaultExamId = kGroupBCombinedExamId;
 
 /// Which subjects the Content Index list shows for the selected exam.
+/// Admin CMS membership: all exam-tagged subjects + Group B stale-id recovery.
 bool adminContentIndexShowsSubject(SubjectItem subject, String examId) {
-  if (examId.isEmpty) return true;
-  if (examId == kGroupBCombinedExamId) {
-    return subject.examId == kGroupBCombinedExamId ||
-        isGroupBCombinedSubjectId(subject.id);
-  }
-  return subject.examId == examId || subject.examId.isEmpty;
+  return adminSubjectBelongsToExam(subject, examId);
 }
 
 List<ExamItem> adminContentIndexExamChoices(List<ExamItem> exams) {
