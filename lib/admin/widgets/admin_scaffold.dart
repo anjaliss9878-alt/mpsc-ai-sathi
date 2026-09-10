@@ -62,6 +62,10 @@ class AdminFormScaffold extends StatelessWidget {
     this.isSaving = false,
     this.canSave = true,
     this.saveLabel = 'Save',
+    this.onSecondary,
+    this.secondaryLabel,
+    this.secondaryIcon = Icons.publish_rounded,
+    this.actions,
     this.maxContentWidth = 700,
   });
 
@@ -73,11 +77,19 @@ class AdminFormScaffold extends StatelessWidget {
   /// When false, Save stays disabled (e.g. async form load / uploads in flight).
   final bool canSave;
   final String saveLabel;
+
+  /// Optional second bottom action (e.g. Publish next to Save Draft).
+  final VoidCallback? onSecondary;
+  final String? secondaryLabel;
+  final IconData secondaryIcon;
+  final List<Widget>? actions;
   final double maxContentWidth;
 
   @override
   Widget build(BuildContext context) {
     final saveEnabled = canSave && !isSaving;
+    final hasSecondary =
+        onSecondary != null && (secondaryLabel?.trim().isNotEmpty ?? false);
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
@@ -95,6 +107,7 @@ class AdminFormScaffold extends StatelessWidget {
             ),
           ],
         ),
+        actions: actions,
       ),
       body: SafeArea(
         child: Center(
@@ -109,33 +122,163 @@ class AdminFormScaffold extends StatelessWidget {
       ),
       bottomNavigationBar: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: SizedBox(
-            width: double.infinity,
-            child: FilledButton.icon(
-              style: FilledButton.styleFrom(
-                backgroundColor: AppColors.orange,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+          child: hasSecondary
+              ? Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.navy,
+                          side: const BorderSide(color: AppColors.navyLight),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        onPressed: saveEnabled ? onSave : null,
+                        icon: isSaving
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.save_outlined),
+                        label: Text(isSaving ? 'Saving…' : saveLabel),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: FilledButton.icon(
+                        style: FilledButton.styleFrom(
+                          backgroundColor: AppColors.orange,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        onPressed: saveEnabled ? onSecondary : null,
+                        icon: Icon(secondaryIcon),
+                        label: Text(secondaryLabel!),
+                      ),
+                    ),
+                  ],
+                )
+              : SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppColors.orange,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    onPressed: saveEnabled ? onSave : null,
+                    icon: isSaving
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Icons.save_rounded),
+                    label: Text(isSaving ? 'Saving…' : saveLabel),
+                  ),
+                ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Soft white section card for premium Admin CMS forms.
+class AdminFormSection extends StatelessWidget {
+  const AdminFormSection({
+    super.key,
+    required this.title,
+    required this.children,
+    this.subtitle,
+    this.trailing,
+    this.icon,
+  });
+
+  final String title;
+  final String? subtitle;
+  final Widget? trailing;
+  final IconData? icon;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+      decoration: BoxDecoration(
+        color: AppColors.cardWhite,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.skySoft),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.navy.withValues(alpha: 0.04),
+            blurRadius: 18,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              if (icon != null) ...[
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: AppColors.skySoft,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(icon, size: 20, color: AppColors.navy),
+                ),
+                const SizedBox(width: 10),
+              ],
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.textPrimary,
+                          ),
+                    ),
+                    if (subtitle != null && subtitle!.trim().isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        subtitle!,
+                        style: const TextStyle(
+                          color: AppColors.textSecondary,
+                          fontSize: 12,
+                          height: 1.35,
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ),
-              onPressed: saveEnabled ? onSave : null,
-              icon: isSaving
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : const Icon(Icons.save_rounded),
-              label: Text(isSaving ? 'Saving…' : saveLabel),
-            ),
+              ?trailing,
+            ],
           ),
-        ),
+          const SizedBox(height: 14),
+          ...children,
+        ],
       ),
     );
   }

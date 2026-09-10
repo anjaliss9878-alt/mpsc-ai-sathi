@@ -23,7 +23,9 @@ class WebTopicEditingSync {
         value = target.value;
       }
       if (value == null) return;
-      _apply(controller, value);
+      final live = _controller;
+      if (live == null) return;
+      _apply(live, value);
     };
     html.document.addEventListener('input', _docListener, true);
     html.document.addEventListener('change', _docListener, true);

@@ -2,7 +2,6 @@ import 'dart:math' as math;
 
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mpsc_combine_ai/models/rag_chunk.dart';
 import 'package:mpsc_combine_ai/models/rag_source.dart';
 import 'package:mpsc_combine_ai/rag/rag_chunker.dart';
 import 'package:mpsc_combine_ai/rag/rag_exceptions.dart';

@@ -43,13 +43,18 @@ class AiLearningEngine {
     FullLessonNarrationService? narration,
     LessonCacheService? cache,
     AiLessonRepository? lessons,
-  })  : _pipeline = pipeline ?? VideoGenerationPipeline(),
-        _generation = generation ?? lessonGenerationService,
+  })  : _generation = generation ?? lessonGenerationService,
         _narration = narration ?? fullLessonNarrationService,
         _cache = cache ?? lessonCacheService,
-        _lessons = lessons ?? aiLessonRepository;
+        _lessons = lessons ?? aiLessonRepository {
+    // Named [pipeline] stays in the public constructor for call-site /
+    // test compatibility. Video orchestration uses dedicated render services.
+    assert(() {
+      pipeline;
+      return true;
+    }());
+  }
 
-  final VideoGenerationPipeline _pipeline;
   final LessonGenerationService _generation;
   final FullLessonNarrationService _narration;
   final LessonCacheService _cache;

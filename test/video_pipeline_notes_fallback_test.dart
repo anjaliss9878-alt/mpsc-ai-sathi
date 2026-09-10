@@ -8,7 +8,6 @@ import 'package:mpsc_combine_ai/services/ai_teacher_system/video_generation_pipe
 import 'package:mpsc_combine_ai/services/ai_teacher_system/video_lesson_cache_service.dart';
 import 'package:mpsc_combine_ai/services/ai_video_render/ai_video_render_engine.dart';
 import 'package:mpsc_combine_ai/services/ai_video_render/lesson_render_job_builder.dart';
-import 'package:mpsc_combine_ai/services/ai_video_render/render_models.dart';
 import 'package:mpsc_combine_ai/services/notes_repository.dart';
 
 class _NoEncodeEngine extends AiVideoRenderEngine {

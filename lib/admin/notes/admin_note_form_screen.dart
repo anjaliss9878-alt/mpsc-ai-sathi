@@ -83,7 +83,10 @@ class _AdminNoteFormScreenState extends State<AdminNoteFormScreen> {
   bool _isUploadingAttachment = false;
   bool _isUploadingVideo = false;
   bool _isIndexing = false;
+  double _uploadProgress = 0;
   String _uploadStatus = 'Idle';
+  String? _pendingPdfName;
+  Uint8List? _pendingPdfBytes;
   String? _loadError;
   String? _noteId;
   DateTime? _updatedAt;
@@ -346,13 +349,23 @@ class _AdminNoteFormScreenState extends State<AdminNoteFormScreen> {
     Uint8List bytes, {
     required bool replace,
   }) async {
+    final lower = fileName.toLowerCase();
+    if (!lower.endsWith('.pdf')) {
+      if (mounted) {
+        showAdminMessage(context, 'Only PDF files are allowed for notes.');
+      }
+      return;
+    }
     if (bytes.isEmpty) {
       if (mounted) showAdminMessage(context, 'Could not read the selected PDF.');
       return;
     }
     setState(() {
       _isUploadingAttachment = true;
-      _uploadStatus = 'Uploading';
+      _uploadProgress = 0;
+      _uploadStatus = 'Uploading 0%';
+      _pendingPdfName = fileName;
+      _pendingPdfBytes = Uint8List.fromList(bytes);
     });
     try {
       final uploaded = await storageService.uploadBytesDetailed(
@@ -360,6 +373,14 @@ class _AdminNoteFormScreenState extends State<AdminNoteFormScreen> {
         fileName: fileName,
         bytes: bytes,
         contentType: 'application/pdf',
+        onProgress: (progress) {
+          if (!mounted) return;
+          final pct = (progress.fraction * 100).clamp(0, 100).round();
+          setState(() {
+            _uploadProgress = progress.fraction.clamp(0.0, 1.0);
+            _uploadStatus = 'Uploading $pct%';
+          });
+        },
       );
       if (!mounted) return;
       mediaBytesCache.write(uploaded.url, Uint8List.fromList(bytes));
@@ -375,7 +396,10 @@ class _AdminNoteFormScreenState extends State<AdminNoteFormScreen> {
         _pdfFileSize = uploaded.byteCount;
         _pdfPageCount = pdfPageCountFromBytes(Uint8List.fromList(bytes)) ?? 0;
         _pdfBytes = Uint8List.fromList(bytes);
+        _uploadProgress = 1;
         _uploadStatus = 'Uploaded';
+        _pendingPdfName = null;
+        _pendingPdfBytes = null;
         _ragStatus = NoteRagStatus.notIndexed;
       });
       for (final p in previous) {
@@ -401,12 +425,25 @@ class _AdminNoteFormScreenState extends State<AdminNoteFormScreen> {
       }
     } catch (e) {
       if (mounted) {
-        setState(() => _uploadStatus = 'Failed');
+        setState(() {
+          _uploadStatus = 'Failed';
+          _uploadProgress = 0;
+        });
         showAdminError(context, e);
       }
     } finally {
       if (mounted) setState(() => _isUploadingAttachment = false);
     }
+  }
+
+  Future<void> _retryPdfUpload() async {
+    final name = _pendingPdfName;
+    final bytes = _pendingPdfBytes;
+    if (name == null || bytes == null || bytes.isEmpty) {
+      showAdminMessage(context, 'Select a PDF again to retry upload.');
+      return;
+    }
+    await _uploadPickedPdf(name, bytes, replace: _pdf != null);
   }
 
   Future<void> _addOtherAttachment({required List<String> allowed}) async {
@@ -761,7 +798,9 @@ class _AdminNoteFormScreenState extends State<AdminNoteFormScreen> {
             '${_updatedAt!.year}';
     final pdf = _pdf;
     final examItems = uniqueAdminSelectItems([
-      for (final e in (_exams.isEmpty ? [ExamItem.mpscCombine()] : _exams))
+      for (final e in (_exams.isEmpty
+          ? [ExamItem.groupBCombined(), ExamItem.mpscCombine()]
+          : _exams))
         AdminSelectItem(id: e.id, label: e.title),
     ]);
     final subjectItems = uniqueAdminSelectItems([
@@ -779,14 +818,33 @@ class _AdminNoteFormScreenState extends State<AdminNoteFormScreen> {
             ),
           ]
         : _topics;
+    final statusColor = switch (_status) {
+      NoteWorkflowStatus.published => const Color(0xFF1B7A4E),
+      NoteWorkflowStatus.unpublished => const Color(0xFF9A3412),
+      NoteWorkflowStatus.underReview => const Color(0xFF9A6B00),
+      NoteWorkflowStatus.approved => AppColors.sky,
+      _ => AppColors.textSecondary,
+    };
 
     return AdminFormScaffold(
-      title: 'Notes — PDF',
+      title: _noteId == null || _noteId!.isEmpty ? 'Add Note' : 'Edit Note',
       isSaving: _isSaving || _isDeleting || _isIndexing,
       canSave: _canSave,
       saveLabel: 'Save Draft',
       onSave: _saveDraft,
-      maxContentWidth: 860,
+      secondaryLabel: 'Publish',
+      onSecondary: _publish,
+      maxContentWidth: 880,
+      actions: [
+        TextButton.icon(
+          onPressed: () => setState(() => _isPreview = !_isPreview),
+          icon: Icon(
+            _isPreview ? Icons.edit_outlined : Icons.visibility_outlined,
+            size: 18,
+          ),
+          label: Text(_isPreview ? 'Edit' : 'Preview'),
+        ),
+      ],
       children: [
         if (_loadError != null)
           Padding(
@@ -796,306 +854,534 @@ class _AdminNoteFormScreenState extends State<AdminNoteFormScreen> {
               style: TextStyle(color: Colors.red.shade800, fontSize: 12),
             ),
           ),
-        Text(
-          'Status: ${noteWorkflowStatusLabel(_status)} · $updatedLabel',
-          style: const TextStyle(color: Colors.grey, fontSize: 12),
-        ),
-        const AdminSectionLabel(label: 'Content index'),
-        AdminSelectField(
-          label: 'Exam',
-          value: committedSelectId(_examId, examItems.map((e) => e.id)),
-          items: examItems,
-          onChanged: _onExamChanged,
-        ),
-        const SizedBox(height: 12),
-        AdminSelectField(
-          label: 'Subject',
-          value: committedSelectId(_subjectId, subjectItems.map((e) => e.id)),
-          items: subjectItems,
-          onChanged: _onSubjectChanged,
-        ),
-        const SizedBox(height: 12),
-        AdminSelectField(
-          label: 'Chapter',
-          value: committedSelectId(
-            _chapterId,
-            _rootChapters.map((c) => c.id),
-          ),
-          items: [
-            for (final c in _rootChapters)
-              AdminSelectItem(id: c.id, label: c.title),
-          ],
-          onChanged: _onChapterChanged,
-        ),
-        const SizedBox(height: 12),
-        AdminSelectField(
-          label: 'Topic',
-          value: committedSelectId(_topicId, topicItems.map((t) => t.id)),
-          items: [
-            for (final t in topicItems)
-              AdminSelectItem(id: t.id, label: t.title),
-          ],
-          onChanged: (v) => setState(() => _topicId = v),
-        ),
-        const AdminSectionLabel(label: 'Note details'),
-        TextField(
-          controller: _titleController,
-          decoration: const InputDecoration(
-            labelText: 'Title',
-            hintText: 'e.g. मूलभूत हक्क — सविस्तर नोट्स',
-          ),
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          controller: _descriptionController,
-          minLines: 2,
-          maxLines: 4,
-          decoration: const InputDecoration(
-            labelText: 'Description',
-            alignLabelWithHint: true,
-          ),
-        ),
-        const SizedBox(height: 12),
-        DropdownButtonFormField<String>(
-          value: _language,
-          decoration: const InputDecoration(labelText: 'Language'),
-          items: const [
-            DropdownMenuItem(value: 'mr', child: Text('Marathi')),
-            DropdownMenuItem(value: 'en', child: Text('English')),
-            DropdownMenuItem(value: 'mr-en', child: Text('Bilingual (Marathi + English)')),
-          ],
-          onChanged: (v) {
-            if (v != null) setState(() => _language = v);
-          },
-        ),
-        const SizedBox(height: 12),
-        DropdownButtonFormField<String>(
-          value: _difficulty,
-          decoration: const InputDecoration(labelText: 'Difficulty'),
-          items: const [
-            DropdownMenuItem(value: 'Easy', child: Text('Easy')),
-            DropdownMenuItem(value: 'Medium', child: Text('Medium')),
-            DropdownMenuItem(value: 'Hard', child: Text('Hard')),
-          ],
-          onChanged: (v) {
-            if (v != null) setState(() => _difficulty = v);
-          },
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          controller: _tagsController,
-          decoration: const InputDecoration(
-            labelText: 'Tags',
-            hintText: 'polity, constitution, article 14',
-          ),
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          controller: _sourceController,
-          decoration: const InputDecoration(
-            labelText: 'Source / Reference',
-            hintText: 'e.g. M. Laxmikanth / NCERT / official PDF',
-          ),
-        ),
-        const AdminSectionLabel(label: 'Original PDF'),
-        Text(
-          'Students receive this exact file. Marathi fonts, tables, diagrams and '
-          'page layout are not rewritten.',
-          style: TextStyle(color: Theme.of(context).hintColor, fontSize: 13),
-        ),
-        const SizedBox(height: 10),
-        if (pdf != null) ...[
-          Card(
-            child: ListTile(
-              leading: const Icon(Icons.picture_as_pdf_rounded, color: AppColors.orange),
-              title: Text(
-                _pdfFileName.isNotEmpty ? _pdfFileName : pdf.name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              subtitle: Text(
-                [
-                  if (_pdfFileSize > 0) formatFileSize(_pdfFileSize),
-                  if (_pdfPageCount > 0) '$_pdfPageCount pages',
-                  'Upload: $_uploadStatus',
-                  'PDF URL: ${isValidFirebaseDownloadUrl(pdf.url) ? 'valid' : 'invalid'}',
-                  'RAG: ${noteRagStatusAdminLabel(_ragStatus)}',
-                  if (_ragStatus == NoteRagStatus.failed && _ragError.isNotEmpty)
-                    _ragError,
-                ].join(' · '),
-              ),
+        Container(
+          width: double.infinity,
+          margin: const EdgeInsets.only(bottom: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [AppColors.navy, AppColors.navyLight],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
             ),
+            borderRadius: BorderRadius.circular(16),
           ),
-          const SizedBox(height: 8),
-          TopicPdfViewer(
-            url: pdf.url,
-            storagePath: _pdfStoragePath,
-            initialBytes: _pdfBytes,
-            showDetailedErrors: true,
-            fileName: _pdfFileName.isNotEmpty ? _pdfFileName : pdf.name,
-            title: 'PDF Preview',
-            height: 280,
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
+          child: Row(
             children: [
-              AdminFilePickButton(
-                label: 'Replace PDF',
-                icon: Icons.swap_horiz_rounded,
-                allowedExtensions: const ['pdf'],
-                enabled: !_isUploadingAttachment,
-                onPicked: (picked) => _onPdfPicked(picked, replace: true),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'MPSC AI साथी · Notes CMS',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      updatedLabel,
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.8),
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              OutlinedButton.icon(
-                onPressed: () => _removeAttachment(pdf),
-                icon: const Icon(Icons.delete_outline_rounded),
-                label: const Text('Remove PDF'),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  noteWorkflowStatusLabel(_status),
+                  style: TextStyle(
+                    color: statusColor,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 12,
+                  ),
+                ),
               ),
             ],
           ),
-        ] else if (_isUploadingAttachment)
-          const LinearProgressIndicator()
-        else
-          AdminFilePickButton(
-            label: 'Upload PDF',
-            icon: Icons.picture_as_pdf_rounded,
-            allowedExtensions: const ['pdf'],
-            enabled: !_isUploadingAttachment,
-            onPicked: (picked) => _onPdfPicked(picked, replace: false),
-          ),
-        if (_ragError.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Text(_ragError, style: TextStyle(color: Colors.red.shade800, fontSize: 12)),
-          ),
-        const AdminSectionLabel(label: 'Workflow'),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
+        ),
+        AdminFormSection(
+          title: 'Content index',
+          subtitle: 'Exam → Subject → Chapter → Topic',
+          icon: Icons.account_tree_rounded,
           children: [
-            OutlinedButton(onPressed: _canSave ? _submitReview : null, child: const Text('Submit for Review')),
-            OutlinedButton(onPressed: _canSave ? _approve : null, child: const Text('Approve')),
-            FilledButton(onPressed: _canSave ? _publish : null, child: const Text('Publish')),
-            OutlinedButton(onPressed: _canSave ? _unpublish : null, child: const Text('Unpublish')),
-            if (_ragStatus == NoteRagStatus.failed || _ragStatus == NoteRagStatus.notIndexed)
+            AdminSelectField(
+              label: 'Exam',
+              value: committedSelectId(_examId, examItems.map((e) => e.id)),
+              items: examItems,
+              onChanged: _onExamChanged,
+            ),
+            const SizedBox(height: 12),
+            AdminSelectField(
+              label: 'Subject',
+              value:
+                  committedSelectId(_subjectId, subjectItems.map((e) => e.id)),
+              items: subjectItems,
+              onChanged: _onSubjectChanged,
+            ),
+            const SizedBox(height: 12),
+            AdminSelectField(
+              label: 'Chapter',
+              value: committedSelectId(
+                _chapterId,
+                _rootChapters.map((c) => c.id),
+              ),
+              items: [
+                for (final c in _rootChapters)
+                  AdminSelectItem(id: c.id, label: c.title),
+              ],
+              onChanged: _onChapterChanged,
+            ),
+            const SizedBox(height: 12),
+            AdminSelectField(
+              label: 'Topic',
+              value: committedSelectId(_topicId, topicItems.map((t) => t.id)),
+              items: [
+                for (final t in topicItems)
+                  AdminSelectItem(id: t.id, label: t.title),
+              ],
+              onChanged: (v) => setState(() => _topicId = v),
+            ),
+          ],
+        ),
+        AdminFormSection(
+          title: 'Note details',
+          subtitle: 'Title, language, and metadata students will see.',
+          icon: Icons.article_rounded,
+          children: [
+            TextField(
+              controller: _titleController,
+              decoration: const InputDecoration(
+                labelText: 'Title',
+                hintText: 'e.g. मूलभूत हक्क — सविस्तर नोट्स',
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _descriptionController,
+              minLines: 2,
+              maxLines: 4,
+              decoration: const InputDecoration(
+                labelText: 'Description',
+                alignLabelWithHint: true,
+              ),
+            ),
+            const SizedBox(height: 12),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final wide = constraints.maxWidth >= 560;
+                final language = DropdownButtonFormField<String>(
+                  key: ValueKey('note-language-$_language'),
+                  initialValue: _language,
+                  decoration: const InputDecoration(labelText: 'Language'),
+                  items: const [
+                    DropdownMenuItem(value: 'mr', child: Text('Marathi')),
+                    DropdownMenuItem(value: 'en', child: Text('English')),
+                    DropdownMenuItem(
+                      value: 'mr-en',
+                      child: Text('Bilingual (Marathi + English)'),
+                    ),
+                  ],
+                  onChanged: (v) {
+                    if (v != null) setState(() => _language = v);
+                  },
+                );
+                final difficulty = DropdownButtonFormField<String>(
+                  key: ValueKey('note-difficulty-$_difficulty'),
+                  initialValue: _difficulty,
+                  decoration: const InputDecoration(labelText: 'Difficulty'),
+                  items: const [
+                    DropdownMenuItem(value: 'Easy', child: Text('Easy')),
+                    DropdownMenuItem(value: 'Medium', child: Text('Medium')),
+                    DropdownMenuItem(value: 'Hard', child: Text('Hard')),
+                  ],
+                  onChanged: (v) {
+                    if (v != null) setState(() => _difficulty = v);
+                  },
+                );
+                if (!wide) {
+                  return Column(
+                    children: [
+                      language,
+                      const SizedBox(height: 12),
+                      difficulty,
+                    ],
+                  );
+                }
+                return Row(
+                  children: [
+                    Expanded(child: language),
+                    const SizedBox(width: 12),
+                    Expanded(child: difficulty),
+                  ],
+                );
+              },
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _tagsController,
+              decoration: const InputDecoration(
+                labelText: 'Tags',
+                hintText: 'polity, constitution, article 14',
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _sourceController,
+              decoration: const InputDecoration(
+                labelText: 'Source / Reference',
+                hintText: 'e.g. M. Laxmikanth / NCERT / official PDF',
+              ),
+            ),
+          ],
+        ),
+        AdminFormSection(
+          title: 'Original PDF',
+          subtitle:
+              'Students receive this exact file. Upload progress is shown live.',
+          icon: Icons.picture_as_pdf_rounded,
+          children: [
+            if (pdf != null) ...[
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.skySoft,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: AppColors.sky.withValues(alpha: 0.25),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.picture_as_pdf_rounded,
+                      color: AppColors.orange,
+                      size: 28,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _pdfFileName.isNotEmpty ? _pdfFileName : pdf.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            [
+                              if (_pdfFileSize > 0)
+                                formatFileSize(_pdfFileSize),
+                              if (_pdfPageCount > 0) '$_pdfPageCount pages',
+                              'Upload: $_uploadStatus',
+                              'URL: ${isValidFirebaseDownloadUrl(pdf.url) ? 'valid' : 'invalid'}',
+                              'RAG: ${noteRagStatusAdminLabel(_ragStatus)}',
+                            ].join(' · '),
+                            style: const TextStyle(
+                              color: AppColors.textSecondary,
+                              fontSize: 12,
+                              height: 1.35,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (_isUploadingAttachment) ...[
+                const SizedBox(height: 10),
+                LinearProgressIndicator(
+                  value: _uploadProgress <= 0 ? null : _uploadProgress,
+                  minHeight: 6,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  _uploadStatus,
+                  style: const TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 10),
+              TopicPdfViewer(
+                url: pdf.url,
+                storagePath: _pdfStoragePath,
+                initialBytes: _pdfBytes,
+                showDetailedErrors: true,
+                fileName: _pdfFileName.isNotEmpty ? _pdfFileName : pdf.name,
+                title: 'PDF Preview',
+                height: 280,
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  AdminFilePickButton(
+                    label: 'Replace PDF',
+                    icon: Icons.swap_horiz_rounded,
+                    allowedExtensions: const ['pdf'],
+                    enabled: !_isUploadingAttachment,
+                    onPicked: (picked) => _onPdfPicked(picked, replace: true),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: _isUploadingAttachment
+                        ? null
+                        : () => _removeAttachment(pdf),
+                    icon: const Icon(Icons.delete_outline_rounded),
+                    label: const Text('Remove PDF'),
+                  ),
+                ],
+              ),
+            ] else if (_isUploadingAttachment) ...[
+              LinearProgressIndicator(
+                value: _uploadProgress <= 0 ? null : _uploadProgress,
+                minHeight: 6,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _pendingPdfName == null
+                    ? _uploadStatus
+                    : '$_uploadStatus · $_pendingPdfName',
+                style: const TextStyle(
+                  color: AppColors.textSecondary,
+                  fontSize: 13,
+                ),
+              ),
+            ] else ...[
+              if (_uploadStatus == 'Failed') ...[
+                Text(
+                  _pendingPdfName == null
+                      ? 'Upload failed. Select the PDF again or retry.'
+                      : 'Upload failed for $_pendingPdfName.',
+                  style: TextStyle(color: Colors.red.shade800, fontSize: 13),
+                ),
+                const SizedBox(height: 8),
+                if (_pendingPdfBytes != null)
+                  OutlinedButton.icon(
+                    onPressed: _retryPdfUpload,
+                    icon: const Icon(Icons.refresh_rounded),
+                    label: const Text('Retry upload'),
+                  ),
+                const SizedBox(height: 10),
+              ],
+              AdminFilePickButton(
+                label: 'Upload PDF',
+                icon: Icons.picture_as_pdf_rounded,
+                allowedExtensions: const ['pdf'],
+                enabled: !_isUploadingAttachment,
+                onPicked: (picked) => _onPdfPicked(picked, replace: false),
+              ),
+            ],
+            if (_ragError.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  _ragError,
+                  style: TextStyle(color: Colors.red.shade800, fontSize: 12),
+                ),
+              ),
+          ],
+        ),
+        AdminFormSection(
+          title: 'Workflow',
+          subtitle: 'Draft stays student-hidden. Publish indexes RAG when a PDF exists.',
+          icon: Icons.rule_folder_rounded,
+          children: [
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                OutlinedButton(
+                  onPressed: _canSave ? _submitReview : null,
+                  child: const Text('Submit for Review'),
+                ),
+                OutlinedButton(
+                  onPressed: _canSave ? _approve : null,
+                  child: const Text('Approve'),
+                ),
+                FilledButton(
+                  onPressed: _canSave ? _publish : null,
+                  child: const Text('Publish'),
+                ),
+                OutlinedButton(
+                  onPressed: _canSave ? _unpublish : null,
+                  child: const Text('Unpublish'),
+                ),
+                if (_ragStatus == NoteRagStatus.failed ||
+                    _ragStatus == NoteRagStatus.notIndexed)
+                  OutlinedButton.icon(
+                    onPressed: (_initial == null || _isIndexing)
+                        ? null
+                        : () => _runRag(_initial!, force: true),
+                    icon: const Icon(Icons.refresh_rounded),
+                    label: Text(
+                      _ragStatus == NoteRagStatus.failed
+                          ? 'RAG Retry'
+                          : 'RAG Index',
+                    ),
+                  ),
+              ],
+            ),
+          ],
+        ),
+        AdminFormSection(
+          title: 'Other attachments (optional)',
+          icon: Icons.attach_file_rounded,
+          children: [
+            ..._attachments.where((a) => a.type != 'pdf').map(
+              (a) => Card(
+                margin: const EdgeInsets.only(bottom: 8),
+                elevation: 0,
+                color: AppColors.skySoft,
+                child: ListTile(
+                  leading: Icon(_iconForAttachment(a.type), color: AppColors.navy),
+                  title: Text(a.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.close_rounded, color: Colors.red),
+                    onPressed: () => _removeAttachment(a),
+                  ),
+                ),
+              ),
+            ),
+            Wrap(
+              spacing: 10,
+              runSpacing: 8,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: () => _addOtherAttachment(
+                    allowed: const ['jpg', 'jpeg', 'png', 'webp', 'gif'],
+                  ),
+                  icon: const Icon(Icons.image_rounded),
+                  label: const Text('Upload Image'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: () =>
+                      _addOtherAttachment(allowed: const ['doc', 'docx']),
+                  icon: const Icon(Icons.description_rounded),
+                  label: const Text('Upload DOCX'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              'Video upload (MP4)',
+              style: TextStyle(
+                fontWeight: FontWeight.w700,
+                color: AppColors.textPrimary,
+              ),
+            ),
+            const SizedBox(height: 8),
+            if (_videoUrl.isNotEmpty && !_isUploadingVideo)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.videocam_rounded),
+                title: Text(
+                  _videoFileName.isEmpty ? 'Topic video.mp4' : _videoFileName,
+                ),
+                trailing: IconButton(
+                  onPressed: _pickAndUploadVideo,
+                  icon: const Icon(Icons.upload_file_rounded),
+                ),
+              )
+            else if (_isUploadingVideo)
+              const LinearProgressIndicator()
+            else
               OutlinedButton.icon(
-                onPressed: (_initial == null || _isIndexing)
-                    ? null
-                    : () => _runRag(_initial!, force: true),
-                icon: const Icon(Icons.refresh_rounded),
-                label: Text(_ragStatus == NoteRagStatus.failed ? 'RAG Retry' : 'RAG Index'),
+                onPressed: _pickAndUploadVideo,
+                icon: const Icon(Icons.videocam_rounded),
+                label: const Text('Upload MP4 Video'),
               ),
           ],
         ),
-        const AdminSectionLabel(label: 'Other attachments (optional)'),
-        ..._attachments.where((a) => a.type != 'pdf').map(
-          (a) => Card(
-            margin: const EdgeInsets.only(bottom: 8),
-            child: ListTile(
-              leading: Icon(_iconForAttachment(a.type), color: AppColors.navy),
-              title: Text(a.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-              trailing: IconButton(
-                icon: const Icon(Icons.close_rounded, color: Colors.red),
-                onPressed: () => _removeAttachment(a),
-              ),
-            ),
-          ),
-        ),
-        Wrap(
-          spacing: 10,
-          children: [
-            OutlinedButton.icon(
-              onPressed: () => _addOtherAttachment(
-                allowed: const ['jpg', 'jpeg', 'png', 'webp', 'gif'],
-              ),
-              icon: const Icon(Icons.image_rounded),
-              label: const Text('Upload Image'),
-            ),
-            OutlinedButton.icon(
-              onPressed: () => _addOtherAttachment(allowed: const ['doc', 'docx']),
-              icon: const Icon(Icons.description_rounded),
-              label: const Text('Upload DOCX'),
-            ),
-          ],
-        ),
-        const AdminSectionLabel(label: 'Video upload (MP4)'),
-        if (_videoUrl.isNotEmpty && !_isUploadingVideo)
-          ListTile(
-            leading: const Icon(Icons.videocam_rounded),
-            title: Text(_videoFileName.isEmpty ? 'Topic video.mp4' : _videoFileName),
-            trailing: IconButton(
-              onPressed: _pickAndUploadVideo,
-              icon: const Icon(Icons.upload_file_rounded),
-            ),
-          )
-        else if (_isUploadingVideo)
-          const LinearProgressIndicator()
-        else
-          OutlinedButton.icon(
-            onPressed: _pickAndUploadVideo,
-            icon: const Icon(Icons.videocam_rounded),
-            label: const Text('Upload MP4 Video'),
-          ),
-        const Text(
-          'One bullet point per line. Blank lines are ignored.',
-          style: TextStyle(color: Colors.grey, fontSize: 12),
-        ),
-        const AdminSectionLabel(label: 'Important Points'),
-        LineListField(
-          label: 'Important Points',
-          initialLines: const [],
-          controller: _pointsController,
-          hintText: 'e.g. रेग्युलेटिंग ॲक्ट, 1773 हा ...',
-          minLines: 5,
-        ),
-        const AdminSectionLabel(label: 'Revision Summary'),
-        LineListField(
-          label: 'Revision Summary',
-          initialLines: const [],
-          controller: _summaryController,
-          hintText: 'e.g. 1773 — कंपनीच्या कारभारावर संसदीय नियंत्रणाची सुरुवात',
-          minLines: 5,
-        ),
-        AdminSectionLabel(
-          label: 'Text content (Markdown)',
+        AdminFormSection(
+          title: 'Study content',
+          subtitle: 'One bullet point per line. Blank lines are ignored.',
+          icon: Icons.menu_book_rounded,
           trailing: TextButton.icon(
             onPressed: () => setState(() => _isPreview = !_isPreview),
-            icon: Icon(_isPreview ? Icons.edit_outlined : Icons.visibility_outlined, size: 18),
+            icon: Icon(
+              _isPreview ? Icons.edit_outlined : Icons.visibility_outlined,
+              size: 18,
+            ),
             label: Text(_isPreview ? 'Edit' : 'Preview'),
           ),
+          children: [
+            LineListField(
+              label: 'Important Points',
+              initialLines: const [],
+              controller: _pointsController,
+              hintText: 'e.g. रेग्युलेटिंग ॲक्ट, 1773 हा ...',
+              minLines: 5,
+            ),
+            const SizedBox(height: 12),
+            LineListField(
+              label: 'Revision Summary',
+              initialLines: const [],
+              controller: _summaryController,
+              hintText: 'e.g. 1773 — कंपनीच्या कारभारावर संसदीय नियंत्रणाची सुरुवात',
+              minLines: 5,
+            ),
+            const SizedBox(height: 12),
+            if (_isPreview)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey.withValues(alpha: 0.3)),
+                ),
+                child: _markdownController.text.trim().isEmpty
+                    ? const Text(
+                        'Nothing to preview yet.',
+                        style: TextStyle(color: AppColors.textSecondary),
+                      )
+                    : MarkdownBody(
+                        data: _markdownController.text,
+                        selectable: true,
+                      ),
+              )
+            else
+              TextField(
+                controller: _markdownController,
+                minLines: 6,
+                maxLines: 16,
+                decoration: const InputDecoration(
+                  labelText: 'Text content (Markdown)',
+                  hintText: '## Heading\n- Bullet point\n**bold text**',
+                  alignLabelWithHint: true,
+                ),
+              ),
+          ],
         ),
-        if (_isPreview)
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.grey.withValues(alpha: 0.3)),
-            ),
-            child: _markdownController.text.trim().isEmpty
-                ? const Text('Nothing to preview yet.', style: TextStyle(color: AppColors.textSecondary))
-                : MarkdownBody(data: _markdownController.text, selectable: true),
-          )
-        else
-          TextField(
-            controller: _markdownController,
-            minLines: 6,
-            maxLines: 16,
-            decoration: const InputDecoration(
-              labelText: 'Text content',
-              hintText: '## Heading\n- Bullet point\n**bold text**',
-              alignLabelWithHint: true,
-            ),
-          ),
         if (_noteId != null && _noteId!.isNotEmpty) ...[
-          const SizedBox(height: 24),
+          const SizedBox(height: 8),
           OutlinedButton.icon(
             style: OutlinedButton.styleFrom(
               foregroundColor: Colors.red,
               side: const BorderSide(color: Colors.red),
+              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
             ),
             onPressed: (_isSaving || _isDeleting) ? null : _delete,
             icon: const Icon(Icons.delete_outline_rounded),

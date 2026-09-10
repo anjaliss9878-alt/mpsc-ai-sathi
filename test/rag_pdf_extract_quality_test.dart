@@ -87,7 +87,6 @@ void main() {
       },
       extractFromPageImages: (images) async {
         fail('image OCR must not run for English');
-        return {'pages': []};
       },
     );
     expect(rasterCalls, 0);
@@ -175,7 +174,6 @@ void main() {
         },
         extractFromPageImages: (images) async {
           fail('must not OCR after rasterize failure');
-          return {'pages': []};
         },
       ),
       throwsA(
@@ -204,7 +202,6 @@ void main() {
         },
         extractFromPageImages: (images) async {
           fail('must not OCR when rasterize returned no images');
-          return {'pages': []};
         },
       ),
       throwsA(
@@ -263,7 +260,6 @@ void main() {
         },
         extractFromPageImages: (images) async {
           fail('must not OCR when rasterize returned no images');
-          return {'pages': []};
         },
       ),
       throwsA(
@@ -284,11 +280,9 @@ void main() {
         },
         rasterizePages: ({required Set<int> pageNumbers}) async {
           fail('must not rasterize on download failure');
-          return const [];
         },
         extractFromPageImages: (images) async {
           fail('must not OCR on download failure');
-          return {'pages': []};
         },
       ),
       throwsA(

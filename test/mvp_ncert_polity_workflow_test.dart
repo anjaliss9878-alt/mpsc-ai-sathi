@@ -8,7 +8,6 @@ import 'package:mpsc_combine_ai/models/note_item.dart';
 import 'package:mpsc_combine_ai/models/pyq_item.dart';
 import 'package:mpsc_combine_ai/models/rag_citation.dart';
 import 'package:mpsc_combine_ai/models/rag_source.dart';
-import 'package:mpsc_combine_ai/rag/rag_exceptions.dart';
 import 'package:mpsc_combine_ai/rag/rag_source_filter.dart';
 import 'package:mpsc_combine_ai/rag/rag_text.dart';
 import 'package:mpsc_combine_ai/services/current_affairs_repository.dart';
