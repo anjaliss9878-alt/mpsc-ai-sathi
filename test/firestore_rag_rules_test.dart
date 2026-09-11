@@ -164,6 +164,14 @@ void main() {
     expect(rules, contains('function isStudentReadableWorkflowDoc()'));
     expect(rules, contains("resource.data.status == 'published'"));
     expect(
+      rules,
+      contains('match /aiGeneratedContent/{docId}'),
+    );
+    expect(
+      _ruleBlock(rules, 'match /aiGeneratedContent/{docId}'),
+      contains('allow read, write: if isAdmin();'),
+    );
+    expect(
       File('lib/services/notes_repository.dart').readAsStringSync(),
       contains("listenPublished(requirePublishedStatus: false)"),
     );

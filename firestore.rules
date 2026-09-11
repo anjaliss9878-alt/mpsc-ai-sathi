@@ -345,6 +345,13 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
+    // AI Content Generator staging drafts. Admin-only; never student-readable.
+    // Students see content only after Admin publishes into existing live
+    // collections (mcqs / flashcards / notes / smartTricks / aiTeacherContent).
+    match /aiGeneratedContent/{docId} {
+      allow read, write: if isAdmin();
+    }
+
     // Revenue source for the Dashboard. No client-side writer exists yet
     // (a real payment/checkout flow would write these from a trusted
     // backend, not directly from the app), so writes are denied entirely.

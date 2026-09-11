@@ -62,6 +62,20 @@ class McqItem {
   bool get isStudentVisible =>
       published && contentWorkflowIsStudentVisible(status);
 
+  /// AI Content Generator / AI practice MCQs — never actual PYQs.
+  bool get isAiPracticeQuestion =>
+      tags.any((t) {
+        final v = t.trim().toLowerCase();
+        return v == 'ai-practice-question' ||
+            v == 'ai-generated' ||
+            v == 'ai practice question';
+      }) ||
+      setTitle.toLowerCase().contains('ai practice');
+
+  String get practiceLabel => 'AI Practice Question';
+
+  bool get isActualPyq => false;
+
   factory McqItem.fromMap(Map<String, dynamic> map, String id) {
     final published = asBool(map['published'], defaultValue: true);
     final status = contentWorkflowStatusFromString(

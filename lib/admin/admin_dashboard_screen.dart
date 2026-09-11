@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:mpsc_combine_ai/admin/ai_content/admin_ai_content_generator_screen.dart';
 import 'package:mpsc_combine_ai/admin/ai_lessons/admin_ai_lessons_screen.dart';
 import 'package:mpsc_combine_ai/admin/ai_teacher_content/admin_ai_teacher_content_screen.dart';
 import 'package:mpsc_combine_ai/admin/audit/admin_audit_log_screen.dart';
@@ -231,6 +232,16 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 icon: Icons.picture_as_pdf_rounded,
                 onTap: () => Navigator.of(context).push(
                   MaterialPageRoute<void>(builder: (_) => const AdminNotesScreen()),
+                ),
+              ),
+              AdminModuleCard(
+                title: 'AI Content Generator',
+                subtitle: 'RAG-grounded MCQs · flashcards · drafts only',
+                icon: Icons.auto_awesome_rounded,
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const AdminAiContentGeneratorScreen(),
+                  ),
                 ),
               ),
               AdminModuleCard(

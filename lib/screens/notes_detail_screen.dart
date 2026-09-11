@@ -788,23 +788,18 @@ class _RelatedMcqsSection extends StatelessWidget {
           return const SizedBox.shrink();
         }
         final all = snapshot.data!;
-        final byChapter = all
+        // Prefer chapter/topic linkage only — never promote other chapters'
+        // MCQs into this chapter merely because the subject matches.
+        final mcqs = all
             .where(
               (q) =>
                   q.chapterId == chapterId ||
-                  q.topicId == chapterId,
+                  q.topicId == chapterId ||
+                  (subjectId.isNotEmpty &&
+                      chapterId.isEmpty &&
+                      q.subjectId == subjectId),
             )
             .toList();
-        final bySubjectId = all.where((q) => q.subjectId == subjectId).toList();
-        final byName = all.where((q) {
-          final needle = subjectTitle.trim().toLowerCase();
-          if (needle.isEmpty) return false;
-          final s = q.subject.trim().toLowerCase();
-          return s == needle || s.contains(needle) || needle.contains(s);
-        }).toList();
-        final mcqs = byChapter.isNotEmpty
-            ? byChapter
-            : (bySubjectId.isNotEmpty ? bySubjectId : byName);
         if (mcqs.isEmpty) return const SizedBox.shrink();
         final preview = mcqs.take(5).toList();
         return Card(
@@ -830,9 +825,26 @@ class _RelatedMcqsSection extends StatelessWidget {
                         const Icon(Icons.quiz_rounded, size: 18, color: AppColors.orange),
                         const SizedBox(width: 8),
                         Expanded(
-                          child: Text(
-                            q.question,
-                            style: const TextStyle(height: 1.35),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (q.isAiPracticeQuestion)
+                                Padding(
+                                  padding: const EdgeInsets.only(bottom: 4),
+                                  child: Text(
+                                    q.practiceLabel,
+                                    style: const TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                      color: AppColors.orange,
+                                    ),
+                                  ),
+                                ),
+                              Text(
+                                q.question,
+                                style: const TextStyle(height: 1.35),
+                              ),
+                            ],
                           ),
                         ),
                       ],

@@ -471,6 +471,17 @@ class _McqSetScreenState extends State<McqSetScreen> {
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
+                  if (question.isAiPracticeQuestion)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Text(
+                        question.practiceLabel,
+                        style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.orange,
+                            ),
+                      ),
+                    ),
                   Text(
                     question.question,
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
