@@ -29,35 +29,35 @@ if (-not (Test-Path $DefinesFile)) {
   Write-Error "Missing $DefinesFile - copy dart_defines.json.example and fill keys (local worker only)."
 }
 
-# Free RAM: stop leftover Flutter web sessions and Flutter-owned Chrome profiles.
+# Only free THIS port so student (:8080) and admin (:8081) can run together.
 # Never kill the classroom worker on :8791 (local /ai/lesson + AI_API_KEY).
 $protectPids = @{}
-Get-NetTCPConnection -LocalPort 8791 -ErrorAction SilentlyContinue |
-  Select-Object -ExpandProperty OwningProcess -Unique |
-  ForEach-Object {
-    if ($_) { $protectPids[$_] = $true }
-  }
+foreach ($protectPort in @(8791)) {
+  Get-NetTCPConnection -LocalPort $protectPort -ErrorAction SilentlyContinue |
+    Select-Object -ExpandProperty OwningProcess -Unique |
+    ForEach-Object {
+      if ($_) { $protectPids[$_] = $true }
+    }
+}
 
-Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-  Where-Object {
-    if ($protectPids.ContainsKey($_.ProcessId)) { return $false }
-    if ($_.CommandLine -match 'classroom_video_worker') { return $false }
-    ($_.Name -match 'dart|flutter') -or
-    ($_.Name -eq 'chrome.exe' -and $_.CommandLine -match 'flutter_tools_chrome|flutter_chrome_debug|remote-debugging-port')
-  } |
-  ForEach-Object {
-    Write-Host "Stopping leftover PID $($_.ProcessId) ($($_.Name))"
-    Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
-  }
-
-# Free the target port if something else holds it.
 Get-NetTCPConnection -LocalPort $Port -ErrorAction SilentlyContinue |
   Select-Object -ExpandProperty OwningProcess -Unique |
   ForEach-Object {
-    if ($_) {
+    if ($_ -and -not $protectPids.ContainsKey($_)) {
       Write-Host "Freeing port $Port (PID $_)"
       Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue
     }
+  }
+
+# Drop stale Flutter-owned Chrome debug profiles only (not other dart web-servers).
+Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+  Where-Object {
+    $_.Name -eq 'chrome.exe' -and
+    $_.CommandLine -match 'flutter_tools_chrome|flutter_chrome_debug|remote-debugging-port'
+  } |
+  ForEach-Object {
+    Write-Host "Stopping leftover Flutter Chrome PID $($_.ProcessId)"
+    Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
   }
 
 Start-Sleep -Seconds 1
